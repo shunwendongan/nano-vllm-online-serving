@@ -143,11 +143,16 @@ bash scripts/setup_colab_gpu.sh configs/cloudstudio/qwen3_native_flash_attn_base
 python scripts/run_colab_config.py --config configs/cloudstudio/qwen3_native_flash_attn_baseline.env
 ```
 
+一键运行 A10 baseline + scheduler sweep：
+
+```bash
+bash scripts/run_cloudstudio_matrix.sh a10
+```
+
 切换到 A100 后可运行：
 
 ```bash
-python scripts/run_colab_config.py --config configs/cloudstudio/qwen3_native_a100_high_concurrency.env
-python scripts/run_colab_config.py --config configs/cloudstudio/qwen3_native_a100_long_context.env
+bash scripts/run_cloudstudio_matrix.sh a100
 ```
 
 详细说明见 [docs/CLOUDSTUDIO_BENCHMARKS.md](docs/CLOUDSTUDIO_BENCHMARKS.md)。
