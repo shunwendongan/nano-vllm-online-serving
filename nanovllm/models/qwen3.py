@@ -9,6 +9,7 @@ from nanovllm.layers.layernorm import RMSNorm
 from nanovllm.layers.linear import QKVParallelLinear, MergedColumnParallelLinear, RowParallelLinear
 from nanovllm.layers.rotary_embedding import get_rope
 from nanovllm.layers.embed_head import VocabParallelEmbedding, ParallelLMHead
+from nanovllm.models.rope_scaling import normalize_default_rope_scaling
 
 
 class Qwen3Attention(nn.Module):
@@ -50,6 +51,7 @@ class Qwen3Attention(nn.Module):
             hidden_size,
             bias=False,
         )
+        rope_scaling = normalize_default_rope_scaling(rope_scaling, model_name="Qwen3")
         self.rotary_emb = get_rope(
             self.head_dim,
             rotary_dim=self.head_dim,
