@@ -8,6 +8,8 @@ from transformers import PretrainedConfig
 
 from nanovllm.models.qwen3 import Qwen3ForCausalLM
 from nanovllm.models.cpm4 import Cpm4ForCausalLM
+from nanovllm.models.gpt_oss import GptOssForCausalLM
+from nanovllm.models.gpt_oss_compat import is_gpt_oss_config, raise_native_not_supported
 
 
 class ModelRegistry:
@@ -22,15 +24,19 @@ class ModelRegistry:
         # Register by architecture name (from config.json)
         self.register("MiniCPMForCausalLM", Cpm4ForCausalLM)
         self.register("Qwen3ForCausalLM", Qwen3ForCausalLM)
+        self.register("GptOssForCausalLM", GptOssForCausalLM)
         
         # Register by model type (alternative mapping)
         self.register("minicpm", Cpm4ForCausalLM)
         self.register("qwen3", Qwen3ForCausalLM)
         self.register("cpm4", Cpm4ForCausalLM)
+        self.register("gpt_oss", GptOssForCausalLM)
+        self.register("gpt-oss", GptOssForCausalLM)
         
         # Additional aliases
         self.register("MiniCPM", Cpm4ForCausalLM)
         self.register("Qwen3", Qwen3ForCausalLM)
+        self.register("GPTOSS", GptOssForCausalLM)
     
     def register(self, model_name: str, model_class: Type):
         """
@@ -73,6 +79,9 @@ class ModelRegistry:
         Returns:
             Model instance
         """
+        if is_gpt_oss_config(hf_config):
+            raise_native_not_supported(hf_config)
+
         # Try to get model from architecture first
         if hasattr(hf_config, 'architectures') and hf_config.architectures:
             architecture = hf_config.architectures[0]

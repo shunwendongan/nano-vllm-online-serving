@@ -6,8 +6,10 @@ from multiprocessing.shared_memory import SharedMemory
 
 from nanovllm.config import Config
 from nanovllm.engine.sequence import Sequence
-from nanovllm.models.qwen3 import Qwen3ForCausalLM
+from nanovllm.models.model_registry import create_model
 from nanovllm.layers.sampler import Sampler
+from nanovllm.layers.ops import set_ops_backend
+from nanovllm.layers.attention import set_attention_backend
 from nanovllm.utils.context import set_context, get_context, reset_context
 from nanovllm.utils.loader import load_model
 
@@ -23,13 +25,20 @@ class ModelRunner:
         self.rank = rank  # 当前进程rank
         self.event = event  # 进程间同步事件
 
-        # 初始化分布式进程组，使用NCCL后端和TCP通信
-        dist.init_process_group("nccl", "tcp://localhost:2333", world_size=self.world_size, rank=rank)
-        torch.cuda.set_device(rank)  # 设置当前进程的GPU
+        # 初始化分布式进程组。backend/init_method可配置，避免多实例服务时端口和后端写死。
+        dist.init_process_group(
+            config.distributed_backend,
+            config.distributed_init_method,
+            world_size=self.world_size,
+            rank=rank,
+        )
+        torch.cuda.set_device(config.cuda_device_offset + rank)  # 设置当前进程的GPU
         default_dtype = torch.get_default_dtype()  # 记录默认数据类型
         torch.set_default_dtype(hf_config.torch_dtype)  # 设置模型数据类型
         torch.set_default_device("cuda")  # 设置默认设备为cuda
-        self.model = Qwen3ForCausalLM(hf_config)  # 构建模型
+        set_ops_backend(config.op_backend)
+        set_attention_backend(config.attention_backend)
+        self.model = create_model(hf_config)  # 构建模型
         load_model(self.model, config.model)  # 加载权重
         self.sampler = Sampler()  # 构建采样器
         self.warmup_model()  # 预热模型，用尽量大的batch和token计算一次
@@ -42,11 +51,11 @@ class ModelRunner:
         # 多进程共享内存和同步
         if self.world_size > 1:
             if rank == 0:
-                self.shm = SharedMemory(name="nanovllm", create=True, size=2**20)  # 主进程创建共享内存
+                self.shm = SharedMemory(name=config.ipc_shm_name, create=True, size=2**20)  # 主进程创建共享内存
                 dist.barrier()  # 同步
             else:
                 dist.barrier()  # 等待主进程
-                self.shm = SharedMemory(name="nanovllm")  # 其他进程连接共享内存
+                self.shm = SharedMemory(name=config.ipc_shm_name)  # 其他进程连接共享内存
                 self.loop()  # 子进程进入循环等待任务
 
     def exit(self):
@@ -114,15 +123,17 @@ class ModelRunner:
         peak = torch.cuda.memory_stats()["allocated_bytes.all.peak"]  # 历史分配过的显存峰值
         current = torch.cuda.memory_stats()["allocated_bytes.all.current"]  # 当前分配的显存
         num_kv_heads = hf_config.num_key_value_heads // self.world_size  # 每个进程分到的KV头数，用于TP并行
+        kv_dtype = self.resolve_kv_cache_dtype(hf_config.torch_dtype)
         # 计算每个KV缓存块的字节数（2表示k和v，层数*块数*块大小*头数*每头维度*数据类型字节数）
-        block_bytes = 2 * hf_config.num_hidden_layers * self.block_size * num_kv_heads * hf_config.head_dim * hf_config.torch_dtype.itemsize
+        block_bytes = 2 * hf_config.num_hidden_layers * self.block_size * num_kv_heads * hf_config.head_dim * kv_dtype.itemsize
         # 计算可用的KV缓存块数量（考虑显存利用率、已用、峰值、当前分配等）
         config.num_kvcache_blocks = int(total * config.gpu_memory_utilization - used - peak + current) // block_bytes
         assert config.num_kvcache_blocks > 0  # 至少要有一个块
         # 分配KV缓存张量，形状为[2, 层数, 块数, 块大小, 头数, 头维度]
         self.kv_cache = torch.zeros(
             2, hf_config.num_hidden_layers, config.num_kvcache_blocks,
-            self.block_size, num_kv_heads, hf_config.head_dim
+            self.block_size, num_kv_heads, hf_config.head_dim,
+            dtype=kv_dtype,
         )
         layer_id = 0
         # 遍历模型的所有子模块，将分配好的KV缓存绑定到每一层
@@ -131,6 +142,15 @@ class ModelRunner:
                 module.k_cache = self.kv_cache[0, layer_id]  # 绑定K缓存
                 module.v_cache = self.kv_cache[1, layer_id]  # 绑定V缓存
                 layer_id += 1
+
+    def resolve_kv_cache_dtype(self, default_dtype: torch.dtype):
+        if self.config.kv_cache_dtype == "auto":
+            return default_dtype
+        raise NotImplementedError(
+            "FP8 KV cache allocation is reserved but not enabled: "
+            "flash-attn paged KV needs compatible scales/dequant support before "
+            f"kv_cache_dtype={self.config.kv_cache_dtype!r} can be used safely."
+        )
 
     def prepare_block_tables(self, seqs: list[Sequence]):
         # 构造block_table张量，补齐长度
@@ -151,13 +171,15 @@ class ModelRunner:
         block_tables = None    # block_table 张量，只有 prefix cache 时才用
 
         for seq in seqs:
-            seqlen = len(seq)  # 当前序列的总长度
+            start = seq.scheduled_prefill_start
+            end = seq.scheduled_prefill_end or len(seq)
+            seqlen = end  # 当前序列的总长度
             # 取出本轮需要推理的 token id（未缓存部分）
-            input_ids.extend(seq[seq.num_cached_tokens:])
+            input_ids.extend(seq[start:end])
             # 生成这些 token 的位置信息
-            positions.extend(list(range(seq.num_cached_tokens, seqlen)))
+            positions.extend(list(range(start, end)))
             # 计算 query 和 key 的长度
-            seqlen_q = seqlen - seq.num_cached_tokens  # 本轮需要推理的 token 数
+            seqlen_q = end - start  # 本轮需要推理的 token 数
             seqlen_k = seqlen                          # 当前序列的总长度
             cu_seqlens_q.append(cu_seqlens_q[-1] + seqlen_q)  # 更新 query 前缀和
             cu_seqlens_k.append(cu_seqlens_k[-1] + seqlen_k)  # 更新 key 前缀和
@@ -165,14 +187,10 @@ class ModelRunner:
             max_seqlen_k = max(seqlen_k, max_seqlen_k)        # 更新最大 key 长度
             if not seq.block_table:
                 continue  # 如果没有 block_table，跳过后续 slot_mapping 处理
-            # 遍历本轮需要写入 KV cache 的 block
-            for i in range(seq.num_cached_blocks, seq.num_blocks):
-                start = seq.block_table[i] * self.block_size
-                if i != seq.num_blocks - 1:
-                    end = start + self.block_size
-                else:
-                    end = start + seq.last_block_num_tokens  # 最后一个 block 可能不满
-                slot_mapping.extend(list(range(start, end)))  # 记录每个 token 的物理位置
+            for pos in range(start, end):
+                block_idx = pos // self.block_size
+                block_offset = pos % self.block_size
+                slot_mapping.append(seq.block_table[block_idx] * self.block_size + block_offset)
 
         # 如果有 prefix cache（key 比 query 多），需要准备 block_tables
         if cu_seqlens_k[-1] > cu_seqlens_q[-1]:
@@ -196,10 +214,13 @@ class ModelRunner:
         slot_mapping = []
         context_lens = []
         for seq in seqs:
+            pos = len(seq) - 1
             input_ids.append(seq.last_token)
-            positions.append(len(seq))
+            positions.append(pos)
             context_lens.append(len(seq))
-            slot_mapping.append(seq.block_table[-1] * self.block_size + seq.last_block_num_tokens  - 1)
+            block_idx = pos // self.block_size
+            block_offset = pos % self.block_size
+            slot_mapping.append(seq.block_table[block_idx] * self.block_size + block_offset)
         input_ids = torch.tensor(input_ids, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
         positions = torch.tensor(positions, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
         slot_mapping = torch.tensor(slot_mapping, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
@@ -250,6 +271,15 @@ class ModelRunner:
         input_ids, positions = self.prepare_prefill(seqs) if is_prefill else self.prepare_decode(seqs)
         temperatures = self.prepare_sample(seqs) if self.rank == 0 else None
         logits = self.run_model(input_ids, positions, is_prefill)
+        if is_prefill:
+            # prefill/chunked prefill会产生每个query token的logits，采样只应该取每条序列本轮最后一个query。
+            last_indices = []
+            offset = 0
+            for seq in seqs:
+                offset += seq.scheduled_prefill_end - seq.scheduled_prefill_start
+                last_indices.append(offset - 1)
+            last_indices = torch.tensor(last_indices, dtype=torch.int64, device=logits.device)
+            logits = logits.index_select(0, last_indices)
         token_ids = self.sampler(logits, temperatures).tolist() if self.rank == 0 else None
         reset_context()
         return token_ids

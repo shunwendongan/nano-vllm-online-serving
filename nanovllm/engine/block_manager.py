@@ -1,132 +1,503 @@
 from collections import deque
-import xxhash
-import numpy as np
+from dataclasses import dataclass
+import hashlib
+import struct
+import time
+
+try:
+    import xxhash
+except ImportError:
+    xxhash = None
 
 from nanovllm.engine.sequence import Sequence
 
 
+@dataclass
 class Block:
-    # 定义一个 Block 类，用于表示 KV 缓存中的一个块
+    block_id: int
+    ref_count: int = 0
+    hash: int = -1
+    token_ids: list[int] | None = None
+    namespace: str = ""
+    last_accessed: int = 0
+    expires_at: float | None = None
 
-    def __init__(self, block_id):
-        self.block_id = block_id           # 块的唯一编号
-        self.ref_count = 0                 # 当前被多少序列引用（引用计数）
-        self.hash = -1                     # 当前块内容的哈希值，-1 表示未设置
-        self.token_ids = []                # 当前块存储的 token id 列表
+    @property
+    def is_cached(self):
+        return self.ref_count == 0 and self.hash != -1
 
-    def update(self, hash: int, token_ids: list[int]):
-        self.hash = hash                   # 更新块的哈希值
-        self.token_ids = token_ids         # 更新块中存储的 token id 列表
+    @property
+    def is_free(self):
+        return self.ref_count == 0 and self.hash == -1
 
-    def reset(self):
-        self.ref_count = 1                 # 重置引用计数为 1（新分配时被一个序列引用）
-        self.hash = -1                     # 重置哈希值为 -1
-        self.token_ids = []                # 清空 token id 列表
+    def reset_live(self):
+        self.ref_count = 1
+        self.hash = -1
+        self.token_ids = None
+
+    def update_hash(self, hash_value: int, token_ids: list[int], clock: int, namespace: str = ""):
+        self.hash = hash_value
+        self.token_ids = list(token_ids)
+        self.namespace = namespace
+        self.last_accessed = clock
+
+    def clear(self):
+        self.ref_count = 0
+        self.hash = -1
+        self.token_ids = None
+        self.namespace = ""
+        self.expires_at = None
 
 
 class BlockManager:
-    """
-    BlockManager 负责管理 KV 缓存中的 block 单元，实现 block 的分配、回收、哈希查找和缓存复用。
-    支持高效的 KV cache 复用和 LLM 推理中的缓存管理。
-    """
-
-    def __init__(self, num_blocks: int, block_size: int):
+    def __init__(
+        self,
+        num_blocks: int,
+        block_size: int,
+        enable_prefix_cache: bool = True,
+        prefix_cache_min_tokens: int = 0,
+        max_cached_blocks: int = 0,
+        max_cached_blocks_per_namespace: int = 0,
+    ):
         assert num_blocks > 0
-        self.block_size = block_size  # 每个 block 的 token 数
-        self.blocks: list[Block] = [Block(i) for i in range(num_blocks)]  # 所有 block 对象
-        self.hash_to_block_id: dict[int, int] = dict()  # 哈希到 block_id 的映射，用于缓存查找
-        self.free_block_ids: deque[int] = deque(range(num_blocks))  # 空闲 block 的 id 队列
-        self.used_block_ids: set[int] = set()  # 已分配 block 的 id 集合
+        self.block_size = block_size
+        self.enable_prefix_cache = enable_prefix_cache
+        self.prefix_cache_min_tokens = prefix_cache_min_tokens
+        self.max_cached_blocks = max_cached_blocks
+        self.max_cached_blocks_per_namespace = max_cached_blocks_per_namespace
+        self.blocks: list[Block] = [Block(i) for i in range(num_blocks)]
+        self.hash_to_block_id: dict[int, int] = {}
+        self.free_block_ids: deque[int] = deque(range(num_blocks))
+        self.cached_block_ids: set[int] = set()
+        self.used_block_ids: set[int] = set()
+        self.clock = 0
+        self.prefix_cache_hits = 0
+        self.prefix_cache_misses = 0
+        self.prefix_cache_hits_by_namespace: dict[str, int] = {}
+        self.prefix_cache_misses_by_namespace: dict[str, int] = {}
+        self.cache_read_input_tokens_by_namespace: dict[str, int] = {}
+        self.cache_creation_input_tokens_by_namespace: dict[str, int] = {}
+        self.evictions = 0
+        self.global_quota_evictions = 0
+        self.namespace_quota_evictions = 0
+        self.expired_purges = 0
+        self.duplicate_cache_blocks_skipped = 0
+        self.prefix_cache_miss_reasons: dict[str, int] = {
+            "cache_disabled": 0,
+            "namespace_mismatch": 0,
+            "ttl_expired": 0,
+            "prefix_shorter_than_min": 0,
+            "no_full_block_at_breakpoint": 0,
+            "hash_miss": 0,
+            "token_guard_mismatch": 0,
+        }
 
     @classmethod
     def compute_hash(cls, token_ids: list[int], prefix: int = -1):
-        # 计算一组 token_ids 的哈希值（可选带前缀），用于缓存查找和复用
-        h = xxhash.xxh64()
+        data = struct.pack(f"<{len(token_ids)}q", *token_ids)
+        if xxhash is not None:
+            h = xxhash.xxh64()
+            if prefix != -1:
+                h.update(prefix.to_bytes(8, "little"))
+            h.update(data)
+            return h.intdigest()
+        h = hashlib.blake2b(digest_size=8)
         if prefix != -1:
             h.update(prefix.to_bytes(8, "little"))
-        h.update(np.array(token_ids).tobytes())
-        return h.intdigest()
+        h.update(data)
+        return int.from_bytes(h.digest(), "little")
 
-    def _allocate_block(self, block_id: int) -> Block:
-        # 分配指定 block_id 的 block，重置其状态并从空闲队列移除
+    @classmethod
+    def compute_namespace_hash(cls, namespace: str):
+        if not namespace:
+            return -1
+        data = namespace.encode("utf-8")
+        if xxhash is not None:
+            h = xxhash.xxh64()
+            h.update(data)
+            return h.intdigest()
+        h = hashlib.blake2b(digest_size=8)
+        h.update(data)
+        return int.from_bytes(h.digest(), "little")
+
+    @property
+    def num_blocks(self):
+        return len(self.blocks)
+
+    @property
+    def num_free_blocks(self):
+        return len(self.free_block_ids)
+
+    @property
+    def num_cached_blocks(self):
+        return len(self.cached_block_ids)
+
+    @property
+    def num_used_blocks(self):
+        return len(self.used_block_ids)
+
+    @property
+    def cache_hit_rate(self):
+        total = self.prefix_cache_hits + self.prefix_cache_misses
+        return self.prefix_cache_hits / total if total else 0.0
+
+    def cached_blocks_by_namespace(self):
+        result: dict[str, int] = {}
+        for block_id in self.cached_block_ids:
+            namespace = self.blocks[block_id].namespace
+            result[namespace] = result.get(namespace, 0) + 1
+        return result
+
+    def stats(self):
+        self._purge_expired_cached_blocks()
+        return {
+            "num_blocks": self.num_blocks,
+            "free_blocks": self.num_free_blocks,
+            "cached_blocks": self.num_cached_blocks,
+            "used_blocks": self.num_used_blocks,
+            "cached_blocks_by_namespace": self.cached_blocks_by_namespace(),
+            "prefix_cache_hits": self.prefix_cache_hits,
+            "prefix_cache_misses": self.prefix_cache_misses,
+            "prefix_cache_hits_by_namespace": dict(self.prefix_cache_hits_by_namespace),
+            "prefix_cache_misses_by_namespace": dict(self.prefix_cache_misses_by_namespace),
+            "cache_read_input_tokens_by_namespace": dict(self.cache_read_input_tokens_by_namespace),
+            "cache_creation_input_tokens_by_namespace": dict(self.cache_creation_input_tokens_by_namespace),
+            "prefix_cache_hit_rate": self.cache_hit_rate,
+            "evictions": self.evictions,
+            "global_quota_evictions": self.global_quota_evictions,
+            "namespace_quota_evictions": self.namespace_quota_evictions,
+            "max_cached_blocks": self.max_cached_blocks,
+            "max_cached_blocks_per_namespace": self.max_cached_blocks_per_namespace,
+            "expired_purges": self.expired_purges,
+            "duplicate_cache_blocks_skipped": self.duplicate_cache_blocks_skipped,
+            "prefix_cache_miss_reasons": dict(self.prefix_cache_miss_reasons),
+        }
+
+    def inspect(self):
+        return {
+            "block_size": self.block_size,
+            "num_blocks": self.num_blocks,
+            "free_blocks": self.num_free_blocks,
+            "used_blocks": self.num_used_blocks,
+            "cached_blocks": self.num_cached_blocks,
+            "cached_blocks_by_namespace": self.cached_blocks_by_namespace(),
+            "prefix_cache_hits": self.prefix_cache_hits,
+            "prefix_cache_misses": self.prefix_cache_misses,
+            "prefix_cache_hit_rate": self.cache_hit_rate,
+            "prefix_cache_miss_reasons": dict(self.prefix_cache_miss_reasons),
+            "evictions": self.evictions,
+            "expired_purges": self.expired_purges,
+            "max_cached_blocks": self.max_cached_blocks,
+            "max_cached_blocks_per_namespace": self.max_cached_blocks_per_namespace,
+        }
+
+    def _tick(self):
+        self.clock += 1
+        return self.clock
+
+    @staticmethod
+    def _add_namespace_counter(counter: dict[str, int], namespace: str, value: int):
+        counter[namespace] = counter.get(namespace, 0) + value
+
+    def _prompt_tokens_in_block(self, seq: Sequence, block_index: int):
+        block_start = block_index * self.block_size
+        block_end = block_start + self.block_size
+        return max(0, min(block_end, seq.num_prompt_tokens) - block_start)
+
+    def _initial_prefix_hash(self, seq: Sequence):
+        return self.compute_namespace_hash(seq.cache_namespace)
+
+    def _purge_expired_cached_blocks(self):
+        now = time.time()
+        purged = 0
+        for block_id in list(self.cached_block_ids):
+            block = self.blocks[block_id]
+            if block.expires_at is not None and block.expires_at <= now:
+                self._purge_cached_block(block_id)
+                purged += 1
+        self.expired_purges += purged
+        if purged:
+            self._add_miss_reason("ttl_expired", purged)
+        return purged
+
+    def _purge_cached_block(self, block_id: int):
         block = self.blocks[block_id]
         assert block.ref_count == 0
-        block.reset()
-        self.free_block_ids.remove(block_id)
-        self.used_block_ids.add(block_id)
-        return self.blocks[block_id]
-
-    def _deallocate_block(self, block_id: int) -> Block:
-        # 回收指定 block_id 的 block，放回空闲队列
-        assert self.blocks[block_id].ref_count == 0
-        self.used_block_ids.remove(block_id)
+        self.cached_block_ids.remove(block_id)
+        self._remove_hash_mapping(block)
+        block.clear()
         self.free_block_ids.append(block_id)
 
-    def can_allocate(self, seq: Sequence) -> bool:
-        # 判断当前空闲 block 是否足够分配给 seq
-        return len(self.free_block_ids) >= seq.num_blocks
-
-    def allocate(self, seq: Sequence):
-        # 为一个序列分配所需的 block，并支持缓存复用
-        assert not seq.block_table
-        h = -1
-        cache_miss = False
-        for i in range(seq.num_blocks):
-            token_ids = seq.block(i)
-            h = self.compute_hash(token_ids, h) if len(token_ids) == self.block_size else -1
-            block_id = self.hash_to_block_id.get(h, -1)
-            if block_id == -1 or self.blocks[block_id].token_ids != token_ids:
-                cache_miss = True  # 没有命中缓存，需要新分配
-            if cache_miss:
-                block_id = self.free_block_ids[0]
-                block = self._allocate_block(block_id)
-            else:
-                seq.num_cached_tokens += self.block_size
-                if block_id in self.used_block_ids:
-                    block = self.blocks[block_id]
-                    block.ref_count += 1  # 复用已分配的 block
-                else:
-                    block = self._allocate_block(block_id)
-            if h != -1:
-                block.update(h, token_ids)
-                self.hash_to_block_id[h] = block_id
-            seq.block_table.append(block_id)
-
-    def deallocate(self, seq: Sequence):
-        # 回收一个序列占用的所有 block
-        for block_id in reversed(seq.block_table):
+    def purge_cached_blocks(self, namespace: str | None = None):
+        purged = 0
+        for block_id in list(self.cached_block_ids):
             block = self.blocks[block_id]
-            block.ref_count -= 1
-            if block.ref_count == 0:
-                self._deallocate_block(block_id)
-        seq.num_cached_tokens = 0
-        seq.block_table.clear()
+            if namespace is None or block.namespace == namespace:
+                self._purge_cached_block(block_id)
+                purged += 1
+        return purged
 
-    def can_append(self, seq: Sequence) -> bool:
-        # 判断是否可以为序列追加一个 block
-        return len(self.free_block_ids) >= (len(seq) % self.block_size == 1)
+    def purge_expired_cached_blocks(self, namespace: str | None = None):
+        now = time.time()
+        purged = 0
+        for block_id in list(self.cached_block_ids):
+            block = self.blocks[block_id]
+            namespace_matches = namespace is None or block.namespace == namespace
+            if namespace_matches and block.expires_at is not None and block.expires_at <= now:
+                self._purge_cached_block(block_id)
+                purged += 1
+        self.expired_purges += purged
+        return purged
+
+    def _remove_hash_mapping(self, block: Block):
+        if block.hash != -1 and self.hash_to_block_id.get(block.hash) == block.block_id:
+            del self.hash_to_block_id[block.hash]
+
+    def _evict_cached_block(self) -> int:
+        assert self.cached_block_ids
+        block_id = min(self.cached_block_ids, key=lambda i: self.blocks[i].last_accessed)
+        block = self.blocks[block_id]
+        self.cached_block_ids.remove(block_id)
+        self._remove_hash_mapping(block)
+        block.clear()
+        self.free_block_ids.append(block_id)
+        self.evictions += 1
+        return self.free_block_ids.popleft()
+
+    def _enforce_namespace_quota(self, namespace: str):
+        if self.max_cached_blocks_per_namespace <= 0:
+            return 0
+        block_ids = [
+            block_id
+            for block_id in self.cached_block_ids
+            if self.blocks[block_id].namespace == namespace
+        ]
+        evicted = 0
+        while len(block_ids) > self.max_cached_blocks_per_namespace:
+            victim = min(block_ids, key=lambda i: self.blocks[i].last_accessed)
+            self._purge_cached_block(victim)
+            block_ids.remove(victim)
+            self.evictions += 1
+            self.namespace_quota_evictions += 1
+            evicted += 1
+        return evicted
+
+    def _enforce_global_quota(self):
+        if self.max_cached_blocks <= 0:
+            return 0
+        evicted = 0
+        while len(self.cached_block_ids) > self.max_cached_blocks:
+            victim = min(self.cached_block_ids, key=lambda i: self.blocks[i].last_accessed)
+            self._purge_cached_block(victim)
+            self.evictions += 1
+            self.global_quota_evictions += 1
+            evicted += 1
+        return evicted
+
+    def _take_free_block_id(self) -> int:
+        self._purge_expired_cached_blocks()
+        if self.free_block_ids:
+            return self.free_block_ids.popleft()
+        return self._evict_cached_block()
+
+    def _allocate_new_block(self) -> Block:
+        block_id = self._take_free_block_id()
+        block = self.blocks[block_id]
+        assert block.ref_count == 0
+        block.reset_live()
+        block.last_accessed = self._tick()
+        self.used_block_ids.add(block_id)
+        self.cached_block_ids.discard(block_id)
+        return block
+
+    def _refresh_expiry(self, block: Block, ttl_seconds: float | None):
+        if ttl_seconds is None:
+            block.expires_at = None
+        else:
+            block.expires_at = time.time() + ttl_seconds
+
+    def _attach_cached_block(self, block_id: int, seq: Sequence):
+        block = self.blocks[block_id]
+        if block.ref_count == 0:
+            self.cached_block_ids.discard(block_id)
+            self.used_block_ids.add(block_id)
+        block.ref_count += 1
+        block.last_accessed = self._tick()
+        self._refresh_expiry(block, seq.cache_ttl_seconds)
+
+    def _release_block(self, block_id: int):
+        block = self.blocks[block_id]
+        assert block.ref_count > 0
+        block.ref_count -= 1
+        if block.ref_count:
+            return
+        self.used_block_ids.discard(block_id)
+        block.last_accessed = self._tick()
+        if self.enable_prefix_cache and block.hash != -1:
+            self.cached_block_ids.add(block_id)
+            self._enforce_namespace_quota(block.namespace)
+            self._enforce_global_quota()
+        else:
+            self._remove_hash_mapping(block)
+            block.clear()
+            self.free_block_ids.append(block_id)
+
+    def available_blocks(self):
+        self._purge_expired_cached_blocks()
+        return len(self.free_block_ids) + len(self.cached_block_ids)
+
+    def _add_miss_reason(self, reason: str, value: int = 1):
+        self.prefix_cache_miss_reasons[reason] = self.prefix_cache_miss_reasons.get(reason, 0) + value
+
+    def _has_cached_tokens_in_other_namespace(self, token_ids: list[int], namespace: str):
+        return any(
+            self.blocks[block_id].token_ids == token_ids
+            and self.blocks[block_id].namespace != namespace
+            for block_id in self.cached_block_ids
+        )
+
+    def estimate_cached_prefix_tokens(self, seq: Sequence):
+        if not self.enable_prefix_cache or not seq.cache_enabled:
+            return 0
+        cacheable_tokens = seq.max_cacheable_tokens(seq.prefill_target_tokens)
+        max_cache_tokens = max(0, min(cacheable_tokens, seq.prefill_target_tokens - 1))
+        if max_cache_tokens < self.prefix_cache_min_tokens:
+            return 0
+        max_cache_blocks = max_cache_tokens // self.block_size
+        prefix_hash = self._initial_prefix_hash(seq)
+        matched_blocks = 0
+        for i in range(max_cache_blocks):
+            token_ids = seq.block_for_tokens(i, seq.prefill_target_tokens)
+            if len(token_ids) != self.block_size:
+                break
+            prefix_hash = self.compute_hash(token_ids, prefix_hash)
+            block_id = self.hash_to_block_id.get(prefix_hash, -1)
+            if block_id == -1 or self.blocks[block_id].token_ids != token_ids:
+                break
+            matched_blocks += 1
+        return matched_blocks * self.block_size
+
+    def can_allocate(self, seq: Sequence, target_num_tokens: int | None = None, reserve_blocks: int = 0) -> bool:
+        target_num_tokens = target_num_tokens if target_num_tokens is not None else len(seq)
+        needed_blocks = Sequence.num_blocks_for_tokens(target_num_tokens)
+        missing = max(0, needed_blocks - len(seq.block_table))
+        usable_blocks = max(0, self.available_blocks() - reserve_blocks)
+        return missing <= usable_blocks
+
+    def match_cached_prefix(self, seq: Sequence):
+        if seq.block_table:
+            return
+        if not self.enable_prefix_cache or not seq.cache_enabled:
+            self._add_miss_reason("cache_disabled")
+            return
+        seq.reset_cache_usage()
+        self._purge_expired_cached_blocks()
+        cacheable_tokens = seq.max_cacheable_tokens(seq.prefill_target_tokens)
+        max_cache_tokens = max(0, min(cacheable_tokens, seq.prefill_target_tokens - 1))
+        if max_cache_tokens < self.prefix_cache_min_tokens:
+            self._add_miss_reason("prefix_shorter_than_min")
+            return
+        max_cache_blocks = max_cache_tokens // self.block_size
+        if max_cache_tokens > 0 and max_cache_blocks == 0:
+            self._add_miss_reason("no_full_block_at_breakpoint")
+            return
+        prefix_hash = self._initial_prefix_hash(seq)
+        for i in range(max_cache_blocks):
+            token_ids = seq.block_for_tokens(i, seq.prefill_target_tokens)
+            if len(token_ids) != self.block_size:
+                break
+            prefix_hash = self.compute_hash(token_ids, prefix_hash)
+            block_id = self.hash_to_block_id.get(prefix_hash, -1)
+            if block_id == -1:
+                self.prefix_cache_misses += 1
+                self._add_namespace_counter(self.prefix_cache_misses_by_namespace, seq.cache_namespace, 1)
+                if self._has_cached_tokens_in_other_namespace(token_ids, seq.cache_namespace):
+                    self._add_miss_reason("namespace_mismatch")
+                else:
+                    self._add_miss_reason("hash_miss")
+                break
+            if self.blocks[block_id].token_ids != token_ids:
+                self.prefix_cache_misses += 1
+                self._add_namespace_counter(self.prefix_cache_misses_by_namespace, seq.cache_namespace, 1)
+                self._add_miss_reason("token_guard_mismatch")
+                break
+            self._attach_cached_block(block_id, seq)
+            seq.block_table.append(block_id)
+            seq.num_cached_tokens += self.block_size
+            seq.num_computed_tokens += self.block_size
+            input_tokens = self._prompt_tokens_in_block(seq, i)
+            seq.cache_read_input_tokens += input_tokens
+            self.prefix_cache_hits += 1
+            self._add_namespace_counter(self.prefix_cache_hits_by_namespace, seq.cache_namespace, 1)
+            if input_tokens:
+                self._add_namespace_counter(
+                    self.cache_read_input_tokens_by_namespace,
+                    seq.cache_namespace,
+                    input_tokens,
+                )
+
+    def ensure_blocks(self, seq: Sequence, target_num_tokens: int):
+        assert target_num_tokens > 0
+        needed_blocks = Sequence.num_blocks_for_tokens(target_num_tokens)
+        while len(seq.block_table) < needed_blocks:
+            block = self._allocate_new_block()
+            seq.block_table.append(block.block_id)
+
+    def prepare_prefill(self, seq: Sequence, target_num_tokens: int):
+        self.match_cached_prefix(seq)
+        assert target_num_tokens > seq.num_computed_tokens
+        self.ensure_blocks(seq, target_num_tokens)
+
+    def can_append(self, seq: Sequence):
+        return self.can_allocate(seq, len(seq))
 
     def may_append(self, seq: Sequence):
-        # 处理序列追加 token 时的 block 分配和哈希更新逻辑
-        block_table = seq.block_table
-        last_block = self.blocks[block_table[-1]]  # 取当前序列的最后一个 block
+        self.ensure_blocks(seq, len(seq))
 
-        if len(seq) % self.block_size == 1:
-            # 情况1：刚刚新开了一个 block，并写入了第一个 token
-            assert last_block.hash != -1  # 上一个 block 必须已经有 hash（已完成）
-            block_id = self.free_block_ids[0]  # 取一个空闲 block
-            self._allocate_block(block_id)     # 分配新 block
-            block_table.append(block_id)       # 加入序列的 block_table
+    def commit_computed_tokens(self, seq: Sequence, up_to_token: int):
+        if not self.enable_prefix_cache or not seq.cache_enabled:
+            return
+        cacheable_tokens = seq.max_cacheable_tokens(up_to_token)
+        if cacheable_tokens < self.prefix_cache_min_tokens:
+            return
+        full_blocks = min(up_to_token, cacheable_tokens) // self.block_size
+        prefix_hash = self._initial_prefix_hash(seq)
+        for i in range(full_blocks):
+            block_id = seq.block_table[i]
+            block = self.blocks[block_id]
+            token_ids = seq.block_for_tokens(i, up_to_token)
+            if block.hash != -1:
+                prefix_hash = block.hash
+                continue
+            if len(token_ids) != self.block_size:
+                continue
+            h = self.compute_hash(token_ids, prefix_hash)
+            existing_block_id = self.hash_to_block_id.get(h, -1)
+            if (
+                existing_block_id != -1
+                and existing_block_id != block_id
+                and self.blocks[existing_block_id].token_ids == token_ids
+            ):
+                self.duplicate_cache_blocks_skipped += 1
+                prefix_hash = h
+                continue
+            block.update_hash(h, token_ids, self._tick(), namespace=seq.cache_namespace)
+            self._refresh_expiry(block, seq.cache_ttl_seconds)
+            self.hash_to_block_id[h] = block_id
+            prefix_hash = h
+            input_tokens = self._prompt_tokens_in_block(seq, i)
+            seq.cache_creation_input_tokens += input_tokens
+            if input_tokens:
+                self._add_namespace_counter(
+                    self.cache_creation_input_tokens_by_namespace,
+                    seq.cache_namespace,
+                    input_tokens,
+                )
 
-        elif len(seq) % self.block_size == 0:
-            # 情况2：刚好填满一个 block，需要计算 hash 并注册到缓存
-            assert last_block.hash == -1       # 当前 block 还没有 hash（未完成）
-            token_ids = seq.block(seq.num_blocks-1)  # 取当前 block 的 token id
-            prefix = self.blocks[block_table[-2]].hash if len(block_table) > 1 else -1  # 上一个 block 的 hash
-            h = self.compute_hash(token_ids, prefix)  # 计算 hash
-            last_block.update(h, token_ids)           # 更新 block 的 hash 和内容
-            self.hash_to_block_id[h] = last_block.block_id  # 注册到哈希表
-
-        else:
-            # 情况3：正在往当前 block 追加 token，还没填满
-            assert last_block.hash == -1  # 当前 block 还没有 hash（未完成）
+    def deallocate(self, seq: Sequence):
+        for block_id in reversed(seq.block_table):
+            self._release_block(block_id)
+        seq.num_cached_tokens = 0
+        seq.num_computed_tokens = 0
+        seq.reset_cache_usage()
+        seq.block_table.clear()

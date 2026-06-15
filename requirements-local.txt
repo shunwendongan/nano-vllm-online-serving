@@ -1,0 +1,5 @@
+pytest
+fastapi>=0.110.0
+starlette
+uvicorn>=0.30.0
+httpx

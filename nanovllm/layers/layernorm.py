@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+from nanovllm.layers.ops import add_rms_norm, rms_norm
 
 
 class RMSNorm(nn.Module):
@@ -19,12 +20,7 @@ class RMSNorm(nn.Module):
         self,
         x: torch.Tensor,
     ) -> torch.Tensor:
-        orig_dtype = x.dtype
-        x = x.to(torch.float32)
-        var = x.pow(2).mean(dim=-1, keepdim=True)
-        x.mul_(torch.rsqrt(var + self.eps))
-        x = x.to(orig_dtype).mul_(self.weight)
-        return x
+        return rms_norm(x, self.weight, self.eps)
 
     @torch.compile
     def add_rms_forward(
@@ -32,13 +28,7 @@ class RMSNorm(nn.Module):
         x: torch.Tensor,
         residual: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        orig_dtype = x.dtype
-        x = x.to(torch.float32).add_(residual.to(torch.float32))
-        residual = x.to(orig_dtype)
-        var = x.pow(2).mean(dim=-1, keepdim=True)
-        x.mul_(torch.rsqrt(var + self.eps))
-        x = x.to(orig_dtype).mul_(self.weight)
-        return x, residual
+        return add_rms_norm(x, residual, self.weight, self.eps)
 
     def forward(
         self,

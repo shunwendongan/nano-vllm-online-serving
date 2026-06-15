@@ -1,0 +1,40 @@
+name: local-regression
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  non-gpu-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install non-GPU test dependencies
+        run: |
+          python -m pip install -U pip
+          python -m pip install -r requirements-local.txt
+
+      - name: Run unittest
+        run: python -m unittest discover -s tests
+
+      - name: Run pytest
+        run: python -m pytest tests -q
+
+      - name: Compile Python files
+        run: python -m compileall nanovllm tests scripts
+
+      - name: CLI smoke checks
+        run: |
+          python -m nanovllm.serve --help
+          python bench_online.py --help
+          python scripts/validate_online_gpu.py --help
+          python scripts/run_colab_config.py --help

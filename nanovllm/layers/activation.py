@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-import torch.nn.functional as F
+from nanovllm.layers.ops import silu_and_mul
 
 
 class SiluAndMul(nn.Module):
@@ -10,5 +10,4 @@ class SiluAndMul(nn.Module):
 
     @torch.compile
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x, y = x.chunk(2, -1)
-        return F.silu(x) * y
+        return silu_and_mul(x)
