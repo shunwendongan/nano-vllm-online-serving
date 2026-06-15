@@ -133,6 +133,25 @@ python scripts/run_colab_config.py \
 
 详细说明见 [docs/COLAB_BENCHMARKS.md](docs/COLAB_BENCHMARKS.md) 和 [docs/PERFORMANCE_ANALYSIS.md](docs/PERFORMANCE_ANALYSIS.md)。
 
+## CloudStudio GPU 快速开始
+
+CloudStudio/A10 工作区优先使用仓库内路径，避免 Colab 的 `/content` 目录假设：
+
+```bash
+nvidia-smi
+bash scripts/setup_colab_gpu.sh configs/cloudstudio/qwen3_native_flash_attn_baseline.env
+python scripts/run_colab_config.py --config configs/cloudstudio/qwen3_native_flash_attn_baseline.env
+```
+
+切换到 A100 后可运行：
+
+```bash
+python scripts/run_colab_config.py --config configs/cloudstudio/qwen3_native_a100_high_concurrency.env
+python scripts/run_colab_config.py --config configs/cloudstudio/qwen3_native_a100_long_context.env
+```
+
+详细说明见 [docs/CLOUDSTUDIO_BENCHMARKS.md](docs/CLOUDSTUDIO_BENCHMARKS.md)。
+
 ## 启动服务
 
 Native nano-vLLM serving：

@@ -13,17 +13,29 @@ if [[ -n "${CONFIG_PATH}" ]]; then
   set +a
 fi
 
-echo "Python: $(python --version)"
+PYTHON_BIN="${SETUP_PYTHON:-${PYTHON:-python}}"
+PYTHON_VERSION="$("${PYTHON_BIN}" --version)"
+echo "Python: ${PYTHON_VERSION}"
+"${PYTHON_BIN}" - <<'PY'
+import sys
+
+if not ((3, 10) <= sys.version_info[:2] < (3, 13)):
+    raise SystemExit(
+        f"Python {sys.version.split()[0]} is unsupported; use Python >=3.10,<3.13 "
+        "for torch/flash-attn/nano-vLLM GPU validation."
+    )
+PY
+
 if ! command -v nvidia-smi >/dev/null 2>&1; then
   echo "nvidia-smi was not found. Switch the Colab runtime to GPU before running model validation." >&2
   exit 1
 fi
 nvidia-smi
 
-python -m pip install -U pip setuptools wheel packaging ninja
-python -m pip install -e . --no-deps
+"${PYTHON_BIN}" -m pip install -U pip setuptools wheel packaging ninja
+"${PYTHON_BIN}" -m pip install -e . --no-deps
 
-if ! python - <<'PY'
+if ! "${PYTHON_BIN}" - <<'PY'
 import importlib.util
 raise SystemExit(0 if importlib.util.find_spec("torch") else 1)
 PY
@@ -32,10 +44,10 @@ then
     echo "torch is missing and INSTALL_TORCH is disabled." >&2
     exit 1
   fi
-  python -m pip install torch --index-url https://download.pytorch.org/whl/cu121
+  "${PYTHON_BIN}" -m pip install torch --index-url "${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}"
 fi
 
-python -m pip install -U \
+"${PYTHON_BIN}" -m pip install -U \
   "transformers>=4.51.0" \
   "accelerate>=0.30.0" \
   "triton>=3.0.0" \
@@ -49,7 +61,7 @@ python -m pip install -U \
   "huggingface_hub[cli]"
 
 if [[ -n "${PIP_EXTRA_PACKAGES:-}" ]]; then
-  python -m pip install ${PIP_EXTRA_PACKAGES}
+  "${PYTHON_BIN}" -m pip install ${PIP_EXTRA_PACKAGES}
 fi
 
 INSTALL_FLASH="${INSTALL_FLASH_ATTN:-auto}"
@@ -63,20 +75,43 @@ fi
 
 if [[ "${INSTALL_FLASH}" == "1" || "${INSTALL_FLASH}" == "true" ]]; then
   export MAX_JOBS="${MAX_JOBS:-2}"
-  python -m pip install flash-attn --no-build-isolation
+  if ! "${PYTHON_BIN}" -m pip install "${FLASH_ATTN_PACKAGE:-flash-attn}" --no-build-isolation; then
+    echo "flash-attn installation failed. Check CUDA toolkit, torch CUDA version, Python version, and MAX_JOBS." >&2
+    exit 1
+  fi
 fi
 
-if [[ -n "${HF_MODEL_ID:-}" && -n "${HF_LOCAL_DIR:-}" ]]; then
+if [[ -n "${HF_MODEL_ID:-}" ]]; then
+  if [[ -z "${HF_LOCAL_DIR:-}" ]]; then
+    HF_SAFE_NAME="${HF_MODEL_ID//\//__}"
+    HF_LOCAL_DIR="${MODEL_CACHE_DIR:-${PWD}/.cache/hf_models}/${HF_SAFE_NAME}"
+    export HF_LOCAL_DIR
+    if [[ -z "${MODEL:-}" && "${MODEL_BACKEND:-native}" == "native" ]]; then
+      MODEL="${HF_LOCAL_DIR}"
+      export MODEL
+    fi
+  fi
   mkdir -p "${HF_LOCAL_DIR}"
-  huggingface-cli download "${HF_MODEL_ID}" --local-dir "${HF_LOCAL_DIR}"
+  if [[ "${SKIP_MODEL_DOWNLOAD:-0}" == "1" || "${SKIP_MODEL_DOWNLOAD:-0}" == "true" ]]; then
+    echo "Skipping HuggingFace model download because SKIP_MODEL_DOWNLOAD=${SKIP_MODEL_DOWNLOAD}."
+  else
+    huggingface-cli download "${HF_MODEL_ID}" --local-dir "${HF_LOCAL_DIR}"
+  fi
 fi
 
-python -m nanovllm.check_runtime \
+if ! "${PYTHON_BIN}" -m nanovllm.check_runtime \
   --model "${MODEL:-${HF_LOCAL_DIR:-}}" \
   --model-backend "${MODEL_BACKEND:-native}" \
   --attention-backend "${ATTENTION_BACKEND:-flash_attn}" \
   --tensor-parallel-size "${TENSOR_PARALLEL_SIZE:-1}" \
   --cuda-device-offset "${CUDA_DEVICE_OFFSET:-0}" \
-  --distributed-backend "${DISTRIBUTED_BACKEND:-nccl}" || true
+  --distributed-backend "${DISTRIBUTED_BACKEND:-nccl}"; then
+  if [[ "${ALLOW_RUNTIME_CHECK_FAILURE:-0}" == "1" || "${ALLOW_RUNTIME_CHECK_FAILURE:-0}" == "true" ]]; then
+    echo "Runtime check failed but ALLOW_RUNTIME_CHECK_FAILURE=${ALLOW_RUNTIME_CHECK_FAILURE}; continuing." >&2
+  else
+    echo "Runtime check failed. Fix the environment before running validate_online_gpu.py." >&2
+    exit 1
+  fi
+fi
 
 echo "Colab setup finished."

@@ -11,6 +11,7 @@ from scripts.validate_online_gpu import (
     parse_args,
     validate_cache_prewarm,
     validate_prefix_cache_probe,
+    wait_ready,
 )
 
 
@@ -106,6 +107,7 @@ class ValidateOnlineGpuTest(unittest.TestCase):
             "--python", "python",
             "--benchmark-requests", "9",
             "--benchmark-concurrency", "3",
+            "--prompt", "benchmark prompt",
             "--max-tokens", "17",
             "--attention-backend", "cuda_ext",
             "--scheduler-fairness", "decode_first",
@@ -121,6 +123,7 @@ class ValidateOnlineGpuTest(unittest.TestCase):
         self.assertIn("--fail-on-errors", command)
         self.assertEqual(command[command.index("--requests") + 1], "9")
         self.assertEqual(command[command.index("--concurrency") + 1], "3")
+        self.assertEqual(command[command.index("--prompt") + 1], "benchmark prompt")
         self.assertEqual(command[command.index("--max-tokens") + 1], "17")
         self.assertEqual(command[command.index("--backend") + 1], "cuda_ext")
         self.assertEqual(command[command.index("--scheduler-policy") + 1], "decode_first")
@@ -224,6 +227,16 @@ class ValidateOnlineGpuTest(unittest.TestCase):
         self.assertTrue(prewarm["skipped"])
         self.assertTrue(probe["skipped"])
         self.assertIn("hf_auto", prewarm["reason"])
+
+    def test_wait_ready_fails_fast_when_server_process_exits(self):
+        class ExitedProcess:
+            returncode = 123
+
+            def poll(self):
+                return self.returncode
+
+        with self.assertRaisesRegex(RuntimeError, "server exited before ready"):
+            wait_ready("http://unused", timeout_s=30, process=ExitedProcess())
 
 
 if __name__ == "__main__":
