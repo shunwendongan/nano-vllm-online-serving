@@ -1,4 +1,5 @@
 import unittest
+import os
 from unittest.mock import patch
 
 from scripts.validate_online_gpu import (
@@ -124,8 +125,8 @@ class ValidateOnlineGpuTest(unittest.TestCase):
         self.assertEqual(command[command.index("--backend") + 1], "cuda_ext")
         self.assertEqual(command[command.index("--scheduler-policy") + 1], "decode_first")
         self.assertEqual(command[command.index("--model-name") + 1], "model-dir")
-        self.assertEqual(command[command.index("--report-json-path") + 1], "reports\\model_dir_cuda_ext_bench.json")
-        self.assertEqual(command[command.index("--report-markdown-path") + 1], "reports\\model_dir_cuda_ext_bench.md")
+        self.assertEqual(command[command.index("--report-json-path") + 1], os.path.join("reports", "model_dir_cuda_ext_bench.json"))
+        self.assertEqual(command[command.index("--report-markdown-path") + 1], os.path.join("reports", "model_dir_cuda_ext_bench.md"))
         self.assertEqual(command[command.index("--cache-namespace") + 1], "tenant-a")
         self.assertEqual(command[command.index("--request-namespace") + 1], "resource-a")
         self.assertEqual(command[command.index("--slo-latency-p95-s") + 1], "8.0")
@@ -206,8 +207,8 @@ class ValidateOnlineGpuTest(unittest.TestCase):
 
         self.assertEqual(command[command.index("--backend") + 1], "hf_auto")
         self.assertEqual(command[command.index("--scheduler-policy") + 1], "hf_auto")
-        self.assertEqual(json_path, "reports\\gpt_oss_hf_auto_bench.json")
-        self.assertEqual(markdown_path, "reports\\gpt_oss_hf_auto_bench.md")
+        self.assertEqual(json_path, os.path.join("reports", "gpt_oss_hf_auto_bench.json"))
+        self.assertEqual(markdown_path, os.path.join("reports", "gpt_oss_hf_auto_bench.md"))
         self.assertEqual(command[command.index("--report-json-path") + 1], json_path)
         self.assertEqual(command[command.index("--report-markdown-path") + 1], markdown_path)
 
