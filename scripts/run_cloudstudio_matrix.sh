@@ -4,6 +4,12 @@ set -euo pipefail
 MODE="${1:-a10}"
 SKIP_SETUP="${SKIP_SETUP:-0}"
 
+summarize_reports() {
+  python scripts/summarize_benchmarks.py --root reports/cloudstudio || true
+}
+
+trap 'status=$?; summarize_reports; exit ${status}' EXIT
+
 case "${MODE}" in
   a10|A10)
     RUN_A100=0

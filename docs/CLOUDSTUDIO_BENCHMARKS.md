@@ -55,6 +55,13 @@ Set `SKIP_SETUP=1` to reuse an already prepared environment:
 SKIP_SETUP=1 bash scripts/run_cloudstudio_matrix.sh a10
 ```
 
+The matrix runner writes an aggregate report after success or failure:
+
+```text
+reports/cloudstudio/summary.json
+reports/cloudstudio/summary.md
+```
+
 ## Policy Sweep
 
 Run after the baseline passes:
@@ -76,6 +83,12 @@ Compare `*_bench.json` and `*_bench.md` across runs for:
 - `server_preemptions`
 - `server_evictions`
 - `bottleneck_analysis`
+
+You can regenerate the aggregate summary at any time:
+
+```bash
+python scripts/summarize_benchmarks.py --root reports/cloudstudio
+```
 
 ## A100 Stress Runs
 
