@@ -35,6 +35,26 @@ cat reports/cloudstudio/qwen3_native_flash_attn_baseline/*/validation_output.txt
 `/readyz`, and the JSON output includes `server_log_tail` so startup failures
 are diagnosable.
 
+## One-Command Matrix
+
+For A10:
+
+```bash
+bash scripts/run_cloudstudio_matrix.sh a10
+```
+
+After switching CloudStudio to A100:
+
+```bash
+bash scripts/run_cloudstudio_matrix.sh a100
+```
+
+Set `SKIP_SETUP=1` to reuse an already prepared environment:
+
+```bash
+SKIP_SETUP=1 bash scripts/run_cloudstudio_matrix.sh a10
+```
+
 ## Policy Sweep
 
 Run after the baseline passes:
