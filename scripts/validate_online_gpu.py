@@ -70,10 +70,12 @@ def run_command(command: list[str], cwd: str, timeout: float | None = None):
     }
 
 
-def wait_ready(base_url: str, timeout_s: float):
+def wait_ready(base_url: str, timeout_s: float, process: subprocess.Popen | None = None):
     deadline = time.time() + timeout_s
     last_error = None
     while time.time() < deadline:
+        if process is not None and process.poll() is not None:
+            raise RuntimeError(f"server exited before ready with code {process.returncode}")
         try:
             status = request_json("GET", f"{base_url}/readyz", timeout=5.0)
             if status.get("ready"):
@@ -199,6 +201,8 @@ def build_benchmark_command(args, base_url: str):
         str(args.benchmark_requests),
         "--concurrency",
         str(args.benchmark_concurrency),
+        "--prompt",
+        args.prompt,
         "--max-tokens",
         str(args.max_tokens),
         "--fetch-metrics",
@@ -382,8 +386,9 @@ def run_validation(args):
     with tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False, suffix=".log") as server_log:
         server_log_path = server_log.name
         process = start_server(args, cwd, server_log)
+        returncode = 0
         try:
-            ready = wait_ready(base_url, args.server_ready_timeout_s)
+            ready = wait_ready(base_url, args.server_ready_timeout_s, process=process)
             results["checks"].append({"name": "readyz", "status": ready})
 
             models = request_json("GET", f"{base_url}/v1/models", timeout=args.http_timeout_s)
@@ -494,6 +499,9 @@ def run_validation(args):
                 results["checks"].append({"name": "benchmark", **benchmark})
                 if benchmark["returncode"] != 0:
                     raise RuntimeError("benchmark failed")
+        except Exception as exc:
+            results["error"] = str(exc)
+            returncode = 1
         finally:
             terminate_server(process)
             with open(server_log_path, encoding="utf-8", errors="replace") as f:
@@ -504,7 +512,7 @@ def run_validation(args):
                 pass
 
     print(json.dumps(results, indent=2, ensure_ascii=False))
-    return 0
+    return returncode
 
 
 def parse_args(argv=None):

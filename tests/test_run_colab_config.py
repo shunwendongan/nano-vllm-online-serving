@@ -32,6 +32,12 @@ class RunColabConfigTest(unittest.TestCase):
                     "SKIP_CACHE_PROBE=true",
                     "ENFORCE_EAGER=false",
                     "HF_MODEL_ID=ignored-by-runner",
+                    "SETUP_PYTHON=python3.11",
+                    "MODEL_CACHE_DIR=.cache/hf_models",
+                    "TORCH_INDEX_URL=https://download.pytorch.org/whl/cu121",
+                    "FLASH_ATTN_PACKAGE=flash-attn",
+                    "SKIP_MODEL_DOWNLOAD=false",
+                    "ALLOW_RUNTIME_CHECK_FAILURE=false",
                 ]),
                 encoding="utf-8",
             )
@@ -58,6 +64,21 @@ class RunColabConfigTest(unittest.TestCase):
     def test_model_is_required(self):
         with self.assertRaisesRegex(ValueError, "MODEL is required"):
             validate_config_keys({"MODEL_BACKEND": "hf_auto"})
+
+    def test_cloudstudio_baseline_config_uses_workspace_local_paths(self):
+        config_path = Path("configs/cloudstudio/qwen3_native_flash_attn_baseline.env")
+        config = load_env_config(config_path)
+        validate_config_keys(config)
+        run_dir = resolve_run_dir(config, config_path, run_id="fixed")
+        command = build_validate_command(config, run_dir, validate_python="python")
+
+        self.assertEqual(config["MODEL"], ".cache/models/Qwen3-0.6B")
+        self.assertEqual(config["HF_LOCAL_DIR"], ".cache/models/Qwen3-0.6B")
+        self.assertEqual(config["OUTPUT_ROOT"], "reports/cloudstudio")
+        self.assertEqual(run_dir, Path("reports/cloudstudio") / "qwen3_native_flash_attn_baseline" / "fixed")
+        self.assertEqual(command[0], "python")
+        self.assertEqual(command[command.index("--model") + 1], ".cache/models/Qwen3-0.6B")
+        self.assertEqual(command[command.index("--report-dir") + 1], str(run_dir))
 
 
 if __name__ == "__main__":

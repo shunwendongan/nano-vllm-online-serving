@@ -109,8 +109,11 @@ class ModelRunner:
         torch.cuda.empty_cache()           # 清空未使用的CUDA显存缓存，释放GPU内存
         torch.cuda.reset_peak_memory_stats() # 重置CUDA的显存峰值统计，便于后续准确监控显存使用峰值
         max_num_batched_tokens, max_model_len = self.config.max_num_batched_tokens, self.config.max_model_len
-        num_seqs = min(max_num_batched_tokens // max_model_len, self.config.max_num_seqs)
-        seqs = [Sequence([0] * max_model_len) for _ in range(num_seqs)]  # 构造填充序列
+        warmup_len = max(1, min(max_model_len, max_num_batched_tokens))
+        num_seqs = max(1, min(max_num_batched_tokens // warmup_len, self.config.max_num_seqs))
+        seqs = [Sequence([0] * warmup_len) for _ in range(num_seqs)]  # 构造填充序列
+        for seq in seqs:
+            seq.set_prefill_chunk(0, len(seq))
         self.run(seqs, True)  # 运行一次prefill
         torch.cuda.empty_cache()
 
@@ -276,7 +279,9 @@ class ModelRunner:
             last_indices = []
             offset = 0
             for seq in seqs:
-                offset += seq.scheduled_prefill_end - seq.scheduled_prefill_start
+                start = seq.scheduled_prefill_start
+                end = seq.scheduled_prefill_end or len(seq)
+                offset += end - start
                 last_indices.append(offset - 1)
             last_indices = torch.tensor(last_indices, dtype=torch.int64, device=logits.device)
             logits = logits.index_select(0, last_indices)
