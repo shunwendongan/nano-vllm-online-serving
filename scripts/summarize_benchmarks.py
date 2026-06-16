@@ -17,6 +17,10 @@ TABLE_COLUMNS = [
     "cache_hit",
     "preemptions",
     "evictions",
+    "admission_slo_rejections",
+    "admission_overload_reason",
+    "stream_flush_tokens",
+    "stream_flush_interval_s",
     "slo_pass",
 ]
 
@@ -74,6 +78,26 @@ def load_report(path: str | Path, root: str | Path):
         "cache_hit": _round(report.get("server_prefix_cache_hit_rate", 0.0)),
         "preemptions": report.get("server_preemptions", 0),
         "evictions": report.get("server_evictions", 0),
+        "admission_slo_rejections": _safe_get(
+            report,
+            "server_admission_slo_rejections",
+            default=metrics.get("admission_slo_rejections", ""),
+        ),
+        "admission_overload_reason": _safe_get(
+            report,
+            "server_admission_overload_reason",
+            default=metrics.get("admission_overload_reason", ""),
+        ),
+        "stream_flush_tokens": _safe_get(
+            report,
+            "server_stream_flush_tokens",
+            default=metrics.get("stream_flush_tokens", ""),
+        ),
+        "stream_flush_interval_s": _safe_get(
+            report,
+            "server_stream_flush_interval_s",
+            default=metrics.get("stream_flush_interval_s", ""),
+        ),
         "slo_pass": report.get("slo_pass", ""),
         "prefix_cache_disabled": prefix_cache_disabled,
         "bottleneck_analysis": report.get("bottleneck_analysis") or [],

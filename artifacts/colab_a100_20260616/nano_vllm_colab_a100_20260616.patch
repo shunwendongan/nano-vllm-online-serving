@@ -1,0 +1,79 @@
+diff --git a/bench_online.py b/bench_online.py
+index 860cc09..6560628 100644
+--- a/bench_online.py
++++ b/bench_online.py
+@@ -333,0 +334,4 @@ def run(args):
++        report["server_admission_slo_rejections"] = metrics.get("admission_slo_rejections", "")
++        report["server_admission_overload_reason"] = metrics.get("admission_overload_reason", "")
++        report["server_stream_flush_tokens"] = metrics.get("stream_flush_tokens", "")
++        report["server_stream_flush_interval_s"] = metrics.get("stream_flush_interval_s", "")
+@@ -382,0 +387,4 @@ def markdown_summary(report: dict):
++        ("server_admission_slo_rejections", report.get("server_admission_slo_rejections", "")),
++        ("server_admission_overload_reason", report.get("server_admission_overload_reason", "")),
++        ("server_stream_flush_tokens", report.get("server_stream_flush_tokens", "")),
++        ("server_stream_flush_interval_s", report.get("server_stream_flush_interval_s", "")),
+diff --git a/scripts/summarize_benchmarks.py b/scripts/summarize_benchmarks.py
+index c8b253f..8ff635b 100644
+--- a/scripts/summarize_benchmarks.py
++++ b/scripts/summarize_benchmarks.py
+@@ -19,0 +20,4 @@ TABLE_COLUMNS = [
++    "admission_slo_rejections",
++    "admission_overload_reason",
++    "stream_flush_tokens",
++    "stream_flush_interval_s",
+@@ -76,0 +81,20 @@ def load_report(path: str | Path, root: str | Path):
++        "admission_slo_rejections": _safe_get(
++            report,
++            "server_admission_slo_rejections",
++            default=metrics.get("admission_slo_rejections", ""),
++        ),
++        "admission_overload_reason": _safe_get(
++            report,
++            "server_admission_overload_reason",
++            default=metrics.get("admission_overload_reason", ""),
++        ),
++        "stream_flush_tokens": _safe_get(
++            report,
++            "server_stream_flush_tokens",
++            default=metrics.get("stream_flush_tokens", ""),
++        ),
++        "stream_flush_interval_s": _safe_get(
++            report,
++            "server_stream_flush_interval_s",
++            default=metrics.get("stream_flush_interval_s", ""),
++        ),
+diff --git a/tests/test_bench_online.py b/tests/test_bench_online.py
+index 92883f7..54c037a 100644
+--- a/tests/test_bench_online.py
++++ b/tests/test_bench_online.py
+@@ -85,0 +86,4 @@ class BenchOnlineTest(unittest.TestCase):
++            "server_admission_slo_rejections": 3,
++            "server_admission_overload_reason": "latency_slo",
++            "server_stream_flush_tokens": 8,
++            "server_stream_flush_interval_s": 0.02,
+@@ -92,0 +97,4 @@ class BenchOnlineTest(unittest.TestCase):
++        self.assertIn("| server_admission_slo_rejections | 3 |", markdown)
++        self.assertIn("| server_admission_overload_reason | latency_slo |", markdown)
++        self.assertIn("| server_stream_flush_tokens | 8 |", markdown)
++        self.assertIn("| server_stream_flush_interval_s | 0.02 |", markdown)
+diff --git a/tests/test_summarize_benchmarks.py b/tests/test_summarize_benchmarks.py
+index 64bd37b..011b1a9 100644
+--- a/tests/test_summarize_benchmarks.py
++++ b/tests/test_summarize_benchmarks.py
+@@ -27,0 +28,4 @@ class SummarizeBenchmarksTest(unittest.TestCase):
++                "server_admission_slo_rejections": 4,
++                "server_admission_overload_reason": "latency_slo",
++                "server_stream_flush_tokens": 8,
++                "server_stream_flush_interval_s": 0.02,
+@@ -38,0 +43,4 @@ class SummarizeBenchmarksTest(unittest.TestCase):
++        self.assertEqual(rows[0]["admission_slo_rejections"], 4)
++        self.assertEqual(rows[0]["admission_overload_reason"], "latency_slo")
++        self.assertEqual(rows[0]["stream_flush_tokens"], 8)
++        self.assertEqual(rows[0]["stream_flush_interval_s"], 0.02)
+@@ -55,0 +64,4 @@ class SummarizeBenchmarksTest(unittest.TestCase):
++                "admission_slo_rejections": 0,
++                "admission_overload_reason": "",
++                "stream_flush_tokens": 1,
++                "stream_flush_interval_s": 0,
+@@ -62,0 +75 @@ class SummarizeBenchmarksTest(unittest.TestCase):
++        self.assertIn("stream_flush_tokens", markdown)

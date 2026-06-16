@@ -1,0 +1,14 @@
+{
+    "head":  "63ddd4fd16dc0935096dcf2e3720ef87fd79e1a3",
+    "patch_path":  "artifacts\\colab_a100_20260616\\nano_vllm_colab_a100_20260616.patch",
+    "patch_sha256":  "9f1227aa3f8205d983d758739db46e69e31305d735fe37d6cec18536c9a5785b",
+    "apply_check_clean_head":  true,
+    "apply_check_base":  "63ddd4fd16dc0935096dcf2e3720ef87fd79e1a3",
+    "patch_files":  [
+                        "bench_online.py",
+                        "scripts/summarize_benchmarks.py",
+                        "tests/test_bench_online.py",
+                        "tests/test_summarize_benchmarks.py"
+                    ],
+    "created_at":  "2026-06-16T20:46:40"
+}

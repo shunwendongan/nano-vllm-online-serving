@@ -247,6 +247,7 @@ python bench_online.py \
 
 - [ONLINE_SERVING.md](ONLINE_SERVING.md): serving API、queue controls、cache controls、benchmark 说明。
 - [docs/COLAB_BENCHMARKS.md](docs/COLAB_BENCHMARKS.md): Colab 实验运行手册。
+- [docs/COLAB_A100_20260616.md](docs/COLAB_A100_20260616.md): 2026-06-16 A100 可恢复实验 runner。
 - [docs/PERFORMANCE_ANALYSIS.md](docs/PERFORMANCE_ANALYSIS.md): 性能指标解释和瓶颈判断规则。
 - [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md): 产品需求和企业痛点。
 - [docs/TECHNICAL_ROADMAP.md](docs/TECHNICAL_ROADMAP.md): 技术路线和后续改造方向。

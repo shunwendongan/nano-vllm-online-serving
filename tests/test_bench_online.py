@@ -83,6 +83,10 @@ class BenchOnlineTest(unittest.TestCase):
             "server_prefix_cache_hit_rate": 0.75,
             "server_preemptions": 1,
             "server_evictions": 2,
+            "server_admission_slo_rejections": 3,
+            "server_admission_overload_reason": "latency_slo",
+            "server_stream_flush_tokens": 8,
+            "server_stream_flush_interval_s": 0.02,
             "slo_pass": True,
         })
 
@@ -90,6 +94,10 @@ class BenchOnlineTest(unittest.TestCase):
         self.assertIn("| scheduler_policy | cache_aware_lpm |", markdown)
         self.assertIn("| ttft_p95_s | 0.12 |", markdown)
         self.assertIn("| server_prefix_cache_hit_rate | 0.75 |", markdown)
+        self.assertIn("| server_admission_slo_rejections | 3 |", markdown)
+        self.assertIn("| server_admission_overload_reason | latency_slo |", markdown)
+        self.assertIn("| server_stream_flush_tokens | 8 |", markdown)
+        self.assertIn("| server_stream_flush_interval_s | 0.02 |", markdown)
         self.assertIn("## Bottleneck Analysis", markdown)
 
     def test_bottleneck_analysis_marks_hf_auto_boundary_and_ttft(self):

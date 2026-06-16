@@ -25,6 +25,10 @@ class SummarizeBenchmarksTest(unittest.TestCase):
                 "server_prefix_cache_hit_rate": 0.5,
                 "server_preemptions": 2,
                 "server_evictions": 0,
+                "server_admission_slo_rejections": 4,
+                "server_admission_overload_reason": "latency_slo",
+                "server_stream_flush_tokens": 8,
+                "server_stream_flush_interval_s": 0.02,
                 "slo_pass": False,
             }), encoding="utf-8")
 
@@ -36,6 +40,10 @@ class SummarizeBenchmarksTest(unittest.TestCase):
         self.assertEqual(rows[0]["backend"], "flash_attn")
         self.assertEqual(rows[0]["policy"], "decode_first")
         self.assertEqual(rows[0]["tok_s"], 128.5)
+        self.assertEqual(rows[0]["admission_slo_rejections"], 4)
+        self.assertEqual(rows[0]["admission_overload_reason"], "latency_slo")
+        self.assertEqual(rows[0]["stream_flush_tokens"], 8)
+        self.assertEqual(rows[0]["stream_flush_interval_s"], 0.02)
 
     def test_markdown_summary_includes_findings(self):
         summary = build_summary([
@@ -53,6 +61,10 @@ class SummarizeBenchmarksTest(unittest.TestCase):
                 "cache_hit": 0.0,
                 "preemptions": 0,
                 "evictions": 1,
+                "admission_slo_rejections": 0,
+                "admission_overload_reason": "",
+                "stream_flush_tokens": 1,
+                "stream_flush_interval_s": 0,
                 "slo_pass": True,
             }
         ], "reports/cloudstudio")
@@ -60,6 +72,7 @@ class SummarizeBenchmarksTest(unittest.TestCase):
         markdown = markdown_summary(summary)
 
         self.assertIn("| exp | run | flash_attn | alternate |", markdown)
+        self.assertIn("stream_flush_tokens", markdown)
         self.assertIn("kv_pressure", markdown)
         self.assertIn("prefill_ttft", markdown)
 
