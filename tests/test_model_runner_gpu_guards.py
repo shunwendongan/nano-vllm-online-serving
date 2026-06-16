@@ -44,6 +44,42 @@ class ModelRunnerGpuGuardTest(unittest.TestCase):
 
         self.assertEqual(token_ids, [0, 1])
 
+    def test_prefill_accepts_logits_already_reduced_by_lm_head(self):
+        runner = object.__new__(ModelRunner)
+        runner.rank = 0
+        runner.sampler = Sampler()
+
+        logits = torch.tensor([
+            [0.0, 10.0],
+            [10.0, 0.0],
+        ])
+        seqs = [
+            Sequence([1, 2], request_id="a"),
+            Sequence([3, 4, 5], request_id="b"),
+        ]
+
+        with patch.object(runner, "prepare_prefill", return_value=(torch.tensor([1, 2, 3, 4, 5]), None)), \
+             patch.object(runner, "prepare_sample", return_value=torch.zeros(2)), \
+             patch.object(runner, "run_model", return_value=logits):
+            token_ids = runner.run(seqs, True)
+
+        self.assertEqual(token_ids, [1, 0])
+
+    def test_prefill_rejects_unexpected_logit_row_count(self):
+        runner = object.__new__(ModelRunner)
+        runner.rank = 0
+        runner.sampler = Sampler()
+        seqs = [
+            Sequence([1, 2], request_id="a"),
+            Sequence([3, 4, 5], request_id="b"),
+        ]
+
+        with patch.object(runner, "prepare_prefill", return_value=(torch.tensor([1, 2, 3, 4, 5]), None)), \
+             patch.object(runner, "prepare_sample", return_value=torch.zeros(2)), \
+             patch.object(runner, "run_model", return_value=torch.zeros(3, 2)):
+            with self.assertRaisesRegex(RuntimeError, "prefill logits row count"):
+                runner.run(seqs, True)
+
     def test_warmup_sets_prefill_chunk_before_calling_run(self):
         runner = object.__new__(ModelRunner)
         runner.config = type("Config", (), {
