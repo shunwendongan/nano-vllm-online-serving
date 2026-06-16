@@ -4,6 +4,10 @@
 
 这个仓库适合作为学习和实习项目展示：代码结构保留 nano-vLLM 的教学可读性，同时补上企业在线推理系统里常见的请求生命周期、调度、缓存、指标和实验配置。
 
+## 共享与协作
+
+本项目由 GitHub 账号 `shunwendongan` 维护，并共享给 Codex coding agent 参与代码分析、性能瓶颈定位、实验配置整理、优化实现和 PR 辅助交付。仓库访问权限仍以 GitHub 实际 collaborator/settings 为准。
+
 ## 主要能力
 
 - 在线推理服务：FastAPI HTTP API、SSE streaming、OpenAI-compatible completions/chat。
