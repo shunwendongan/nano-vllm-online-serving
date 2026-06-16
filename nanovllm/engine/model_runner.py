@@ -274,7 +274,7 @@ class ModelRunner:
         input_ids, positions = self.prepare_prefill(seqs) if is_prefill else self.prepare_decode(seqs)
         temperatures = self.prepare_sample(seqs) if self.rank == 0 else None
         logits = self.run_model(input_ids, positions, is_prefill)
-        if is_prefill:
+        if is_prefill and self.rank == 0:
             # prefill/chunked prefill会产生每个query token的logits，采样只应该取每条序列本轮最后一个query。
             last_indices = []
             offset = 0
@@ -283,8 +283,14 @@ class ModelRunner:
                 end = seq.scheduled_prefill_end or len(seq)
                 offset += end - start
                 last_indices.append(offset - 1)
-            last_indices = torch.tensor(last_indices, dtype=torch.int64, device=logits.device)
-            logits = logits.index_select(0, last_indices)
+            if logits.size(0) == offset:
+                last_indices = torch.tensor(last_indices, dtype=torch.int64, device=logits.device)
+                logits = logits.index_select(0, last_indices)
+            elif logits.size(0) != len(seqs):
+                raise RuntimeError(
+                    "prefill logits row count must match either all query tokens "
+                    f"({offset}) or scheduled sequences ({len(seqs)}), got {logits.size(0)}"
+                )
         token_ids = self.sampler(logits, temperatures).tolist() if self.rank == 0 else None
         reset_context()
         return token_ids
