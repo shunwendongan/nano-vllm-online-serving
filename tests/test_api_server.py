@@ -189,7 +189,7 @@ class FakeAsyncEngine:
                     "cache_creation_input_tokens": 4,
                 },
             }
-        token_ids = [101, 102]
+        token_ids = list(range(101, 101 + sampling_params.max_tokens))
         return {
             "request_id": request.request_id,
             "trace_id": request.trace_id,
@@ -223,7 +223,7 @@ class FakeAsyncEngine:
                 },
             }
             return
-        token_ids = [101, 102]
+        token_ids = list(range(101, 101 + request.max_tokens))
         for index, token_id in enumerate(token_ids):
             finished = index == len(token_ids) - 1
             yield {
@@ -326,6 +326,23 @@ class ApiServerTest(unittest.TestCase):
         self.assertEqual([payload["trace_id"] for payload in payloads], ["stream-id", "stream-id"])
         self.assertTrue(payloads[-1]["finished"])
         self.assertIn("stream-id", self.engine.aborted)
+
+    def test_generate_stream_coalesces_after_first_token(self):
+        app = create_app("fake-model", stream_interval=2)
+        client_context = TestClient(app)
+        client = client_context.__enter__()
+        self.addCleanup(client_context.__exit__, None, None, None)
+
+        response = client.post(
+            "/generate_stream",
+            json={"prompt": "hello", "max_tokens": 4, "request_id": "coalesce-id"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payloads = sse_payloads(response.text)
+        self.assertEqual([payload["text"] for payload in payloads], ["<101>", "<102><103>", "<104>"])
+        self.assertEqual([payload["token_ids"] for payload in payloads], [[101], [102, 103], [104]])
+        self.assertTrue(payloads[-1]["finished"])
 
     def test_openai_completion_non_stream_and_stream_shapes(self):
         response = self.client.post(

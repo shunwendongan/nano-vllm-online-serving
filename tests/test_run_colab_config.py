@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from scripts.run_colab_config import (
+    apply_env_overrides,
     build_validate_command,
     load_env_config,
     parse_env_line,
@@ -60,6 +61,28 @@ class RunColabConfigTest(unittest.TestCase):
     def test_validate_config_keys_rejects_typos(self):
         with self.assertRaisesRegex(ValueError, "unknown config keys"):
             validate_config_keys({"MODEL": "model", "MODELL": "typo"})
+
+    def test_apply_env_overrides_updates_known_runtime_keys(self):
+        config = {
+            "MODEL": "model",
+            "BENCHMARK_CONCURRENCY": "4",
+            "BENCHMARK_REQUESTS": "32",
+        }
+
+        overrides = apply_env_overrides(
+            config,
+            {
+                "BENCHMARK_CONCURRENCY": "64",
+                "STREAM_INTERVAL": "4",
+                "UNKNOWN_KEY": "ignored",
+            },
+        )
+
+        self.assertEqual(config["BENCHMARK_CONCURRENCY"], "64")
+        self.assertEqual(config["STREAM_INTERVAL"], "4")
+        self.assertEqual(overrides["BENCHMARK_CONCURRENCY"], {"old": "4", "new": "64"})
+        self.assertEqual(overrides["STREAM_INTERVAL"], {"old": None, "new": "4"})
+        self.assertNotIn("UNKNOWN_KEY", config)
 
     def test_model_is_required(self):
         with self.assertRaisesRegex(ValueError, "MODEL is required"):

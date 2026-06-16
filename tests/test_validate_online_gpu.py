@@ -46,6 +46,7 @@ class ValidateOnlineGpuTest(unittest.TestCase):
             "--max-active-tokens", "8192",
             "--max-active-tokens-per-namespace", "2048",
             "--metrics-window-size", "64",
+            "--stream-interval", "4",
             "--no-enforce-eager",
         ])
 
@@ -78,6 +79,7 @@ class ValidateOnlineGpuTest(unittest.TestCase):
             "--max-active-tokens": "8192",
             "--max-active-tokens-per-namespace": "2048",
             "--metrics-window-size": "64",
+            "--stream-interval": "4",
         }.items():
             self.assertEqual(command[command.index(flag) + 1], value)
         self.assertIn("--disable-prefix-cache", command)

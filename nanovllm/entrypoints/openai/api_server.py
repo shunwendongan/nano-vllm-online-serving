@@ -21,6 +21,65 @@ def _json_sse(payload: dict):
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
+def _normalize_stream_interval(value):
+    try:
+        interval = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"stream_interval must be an integer, got {value!r}") from exc
+    if interval < 1:
+        raise ValueError("stream_interval must be >= 1")
+    return interval
+
+
+def _merge_stream_outputs(outputs: list[dict]):
+    if len(outputs) == 1:
+        output = dict(outputs[0])
+        if output.get("token_id") is not None:
+            output.setdefault("token_ids", [output["token_id"]])
+        return output
+
+    merged = dict(outputs[-1])
+    token_ids = [output["token_id"] for output in outputs if output.get("token_id") is not None]
+    merged["text"] = "".join(output.get("text", "") for output in outputs)
+    merged["token_ids"] = token_ids
+    if token_ids:
+        merged["token_id"] = token_ids[-1]
+    return merged
+
+
+async def _iter_stream_outputs(engine, engine_request, stream_interval: int):
+    buffer: list[dict] = []
+    buffered_tokens = 0
+    emitted_first_token = False
+
+    async for output in engine.iter_request(engine_request):
+        token_id = output.get("token_id")
+        if token_id is None:
+            if buffer:
+                yield _merge_stream_outputs(buffer)
+                buffer = []
+                buffered_tokens = 0
+            yield output
+            continue
+
+        buffer.append(output)
+        buffered_tokens += 1
+        should_flush = output.get("finished") or output.get("error")
+        if not emitted_first_token:
+            emitted_first_token = True
+            should_flush = True
+        elif buffered_tokens >= stream_interval:
+            should_flush = True
+
+        if should_flush:
+            yield _merge_stream_outputs(buffer)
+            buffer = []
+            buffered_tokens = 0
+
+    if buffer:
+        yield _merge_stream_outputs(buffer)
+
+
 def _model_name(model: str):
     return os.path.basename(os.path.normpath(model)) or model
 
@@ -113,6 +172,7 @@ def create_app(model: str, **engine_kwargs):
         finally:
             await app.state.engine.shutdown()
 
+    stream_interval = _normalize_stream_interval(engine_kwargs.pop("stream_interval", 1))
     model_backend = engine_kwargs.pop("model_backend", "native")
     app = FastAPI(title="nano-vLLM", lifespan=lifespan)
     if model_backend == "hf_auto":
@@ -126,6 +186,7 @@ def create_app(model: str, **engine_kwargs):
     app.state.model_backend = model_backend
     app.state.model_name = _model_name(model)
     app.state.created = int(time.time())
+    app.state.stream_interval = stream_interval
 
     def rejected(exc: RequestRejected):
         return HTTPException(status_code=429, detail=str(exc))
@@ -145,7 +206,11 @@ def create_app(model: str, **engine_kwargs):
     async def simple_stream(request: Request, engine_request) -> AsyncIterator[str]:
         request_id = engine_request.request_id
         try:
-            async for output in app.state.engine.iter_request(engine_request):
+            async for output in _iter_stream_outputs(
+                app.state.engine,
+                engine_request,
+                app.state.stream_interval,
+            ):
                 if await request.is_disconnected():
                     await app.state.engine.abort(request_id)
                     break
@@ -153,6 +218,7 @@ def create_app(model: str, **engine_kwargs):
                     "request_id": output["request_id"],
                     "trace_id": output.get("trace_id"),
                     "token_id": output.get("token_id"),
+                    "token_ids": output.get("token_ids"),
                     "text": output.get("text", ""),
                     "finished": output.get("finished", False),
                     "finish_reason": output.get("finish_reason"),
@@ -388,7 +454,11 @@ def create_app(model: str, **engine_kwargs):
 
             async def stream():
                 try:
-                    async for output in app.state.engine.iter_request(engine_request):
+                    async for output in _iter_stream_outputs(
+                        app.state.engine,
+                        engine_request,
+                        app.state.stream_interval,
+                    ):
                         if await request.is_disconnected():
                             await app.state.engine.abort(engine_request_id)
                             break
@@ -470,7 +540,11 @@ def create_app(model: str, **engine_kwargs):
 
             async def stream():
                 try:
-                    async for output in app.state.engine.iter_request(engine_request):
+                    async for output in _iter_stream_outputs(
+                        app.state.engine,
+                        engine_request,
+                        app.state.stream_interval,
+                    ):
                         if await request.is_disconnected():
                             await app.state.engine.abort(engine_request_id)
                             break

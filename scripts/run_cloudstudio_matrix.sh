@@ -40,6 +40,11 @@ bash scripts/run_colab_sweep.sh \
 echo "==> Optional CUDA extension decode experiment"
 python scripts/run_colab_config.py --config configs/cloudstudio/qwen3_native_cuda_ext_decode.env
 
+if [[ "${RUN_A100}" != "1" ]]; then
+  echo "==> A10 optimized high-concurrency probe"
+  python scripts/run_colab_config.py --config configs/cloudstudio/qwen3_native_a10_prefill_first_c64_r128.env
+fi
+
 if [[ "${RUN_A100}" == "1" ]]; then
   echo "==> A100 high-concurrency and long-context stress runs"
   python scripts/run_colab_config.py --config configs/cloudstudio/qwen3_native_a100_high_concurrency.env

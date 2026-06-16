@@ -62,6 +62,27 @@ reports/cloudstudio/summary.json
 reports/cloudstudio/summary.md
 ```
 
+## A10 Optimized Probe
+
+The A10 bottleneck report showed low queue wait, no KV preemptions, and low GPU
+SM/memory utilization. Use the checked-in optimized probe to exercise larger
+decode batches with `prefill_first`, CUDA graph decode, and reduced SSE flush
+frequency:
+
+```bash
+python scripts/run_colab_config.py \
+  --config configs/cloudstudio/qwen3_native_a10_prefill_first_c64_r128.env
+```
+
+For short sweeps, override only the probe dimensions from the shell. Overrides
+are recorded in `resolved_config.json`:
+
+```bash
+BENCHMARK_CONCURRENCY=96 BENCHMARK_REQUESTS=192 \
+python scripts/run_colab_config.py \
+  --config configs/cloudstudio/qwen3_native_a10_prefill_first_c64_r128.env
+```
+
 ## Policy Sweep
 
 Run after the baseline passes:
