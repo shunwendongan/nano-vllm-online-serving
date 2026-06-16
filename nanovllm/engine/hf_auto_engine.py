@@ -36,7 +36,7 @@ class HFAutoAsyncEngine:
     fail-fast.
     """
 
-    def __init__(self, model: str, output_queue_size: int = 16, **kwargs):
+    def __init__(self, model: str, output_queue_size: int = 1024, **kwargs):
         self.model = model
         self.output_queue_size = output_queue_size
         self.kwargs = kwargs
