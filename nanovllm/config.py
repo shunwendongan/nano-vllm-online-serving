@@ -68,6 +68,12 @@ class Config:
                 f"kv_compression={self.kv_compression!r} is reserved for future experiments; "
                 "the current stable path implements paged KV cache, prefix reuse, and TTL/namespace controls."
             )
+        if self.attention_backend == "cuda_ext" and self.enable_prefix_cache:
+            raise NotImplementedError(
+                "attention_backend='cuda_ext' currently requires --disable-prefix-cache: "
+                "the first CUDA extension decode kernel uses float32 KV cache, while prefix-cache "
+                "prefill reuse still depends on flash-attn's low-precision KV path."
+            )
         self.hf_config = AutoConfig.from_pretrained(self.model)  # 加载transformers模型配置
         self.max_model_len = min(self.max_model_len, self.hf_config.max_position_embeddings)  # 限制最大长度不超过模型支持
         assert self.max_num_batched_tokens > 0
