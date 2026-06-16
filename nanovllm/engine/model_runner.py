@@ -147,7 +147,11 @@ class ModelRunner:
                 layer_id += 1
 
     def resolve_kv_cache_dtype(self, default_dtype: torch.dtype):
+        if self.config.kv_cache_dtype == "float32":
+            return torch.float32
         if self.config.kv_cache_dtype == "auto":
+            if self.config.attention_backend == "cuda_ext":
+                return torch.float32
             return default_dtype
         raise NotImplementedError(
             "FP8 KV cache allocation is reserved but not enabled: "

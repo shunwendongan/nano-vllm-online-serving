@@ -30,7 +30,7 @@ def parse_args():
     parser.add_argument("--prefix-cache-min-tokens", type=int, default=0)
     parser.add_argument("--max-cached-blocks", type=int, default=0)
     parser.add_argument("--max-cached-blocks-per-namespace", type=int, default=0)
-    parser.add_argument("--kv-cache-dtype", default="auto", choices=["auto", "fp8_e4m3", "fp8_e5m2"])
+    parser.add_argument("--kv-cache-dtype", default="auto", choices=["auto", "float32", "fp8_e4m3", "fp8_e5m2"])
     parser.add_argument(
         "--kv-compression",
         default="none",
