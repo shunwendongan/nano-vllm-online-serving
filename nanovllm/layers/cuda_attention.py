@@ -39,7 +39,7 @@ def _load_extension():
             _EXTENSION = load(
                 name="nanovllm_cuda_ext",
                 sources=_source_paths(),
-                extra_cuda_cflags=["-O3"],
+                extra_cuda_cflags=["-O3", "-allow-unsupported-compiler"],
                 verbose=False,
             )
             return _EXTENSION
