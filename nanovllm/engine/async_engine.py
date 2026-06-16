@@ -56,7 +56,7 @@ class AsyncLLMEngine:
         engine_cls=None,
         max_pending_requests: int = 1024,
         max_active_requests: int | None = None,
-        output_queue_size: int = 16,
+        output_queue_size: int = 1024,
         request_timeout_s: float | None = None,
         queue_timeout_s: float | None = None,
         request_log_path: str | None = None,

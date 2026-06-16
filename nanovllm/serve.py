@@ -53,7 +53,7 @@ def parse_args():
     parser.add_argument("--max-active-requests-per-namespace", type=int, default=0)
     parser.add_argument("--max-active-tokens", type=int, default=None)
     parser.add_argument("--max-active-tokens-per-namespace", type=int, default=None)
-    parser.add_argument("--output-queue-size", type=int, default=16)
+    parser.add_argument("--output-queue-size", type=int, default=1024)
     parser.add_argument("--request-timeout-s", type=float, default=None)
     parser.add_argument("--queue-timeout-s", type=float, default=None)
     parser.add_argument("--request-log-path", default=None)
