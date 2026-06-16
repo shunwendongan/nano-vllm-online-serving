@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import shutil
 
 
 _EXTENSION = None
@@ -14,6 +15,20 @@ def _source_paths():
         os.path.join(root, "kernels", "cuda_ext", "bindings.cpp"),
         os.path.join(root, "kernels", "cuda_ext", "attention.cu"),
     ]
+
+
+def _cuda_cflags():
+    flags = ["-O3"]
+    host_compiler = (
+        os.environ.get("NANOVLLM_CUDA_HOST_COMPILER")
+        or shutil.which("g++-12")
+        or shutil.which("g++-11")
+    )
+    if host_compiler:
+        flags.append(f"-ccbin={host_compiler}")
+    else:
+        flags.append("-allow-unsupported-compiler")
+    return flags
 
 
 def _load_extension():
@@ -39,7 +54,7 @@ def _load_extension():
             _EXTENSION = load(
                 name="nanovllm_cuda_ext",
                 sources=_source_paths(),
-                extra_cuda_cflags=["-O3", "-allow-unsupported-compiler"],
+                extra_cuda_cflags=_cuda_cflags(),
                 verbose=False,
             )
             return _EXTENSION

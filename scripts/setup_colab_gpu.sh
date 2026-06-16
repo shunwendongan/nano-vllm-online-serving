@@ -32,6 +32,21 @@ if ! command -v nvidia-smi >/dev/null 2>&1; then
 fi
 nvidia-smi
 
+install_cuda_host_compiler() {
+  if command -v g++-12 >/dev/null 2>&1 || command -v g++-11 >/dev/null 2>&1; then
+    return 0
+  fi
+  if command -v apt-get >/dev/null 2>&1 && [[ "$(id -u)" == "0" ]]; then
+    echo "Installing g++-12 for CUDA extension builds."
+    apt-get update
+    apt-get install -y g++-12
+  fi
+}
+
+if [[ "${ATTENTION_BACKEND:-flash_attn}" == "cuda_ext" || "${OP_BACKEND:-torch}" == "cuda_ext" ]]; then
+  install_cuda_host_compiler
+fi
+
 "${PYTHON_BIN}" -m pip install -U pip setuptools wheel packaging ninja
 "${PYTHON_BIN}" -m pip install -e . --no-deps
 
