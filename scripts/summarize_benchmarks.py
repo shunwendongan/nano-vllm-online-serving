@@ -52,6 +52,10 @@ def load_report(path: str | Path, root: str | Path):
     run_id = parts[1] if len(parts) >= 2 else ""
     report_file = parts[-1]
     metrics = report.get("server_metrics") or {}
+    miss_reasons = metrics.get("prefix_cache_miss_reasons") or {}
+    prefix_cache_disabled = bool(miss_reasons.get("cache_disabled")) and not (
+        metrics.get("prefix_cache_hits") or metrics.get("prefix_cache_misses")
+    )
     return {
         "experiment": experiment,
         "run_id": run_id,
@@ -71,6 +75,7 @@ def load_report(path: str | Path, root: str | Path):
         "preemptions": report.get("server_preemptions", 0),
         "evictions": report.get("server_evictions", 0),
         "slo_pass": report.get("slo_pass", ""),
+        "prefix_cache_disabled": prefix_cache_disabled,
         "bottleneck_analysis": report.get("bottleneck_analysis") or [],
     }
 
@@ -122,13 +127,14 @@ def aggregate_findings(rows):
         row for row in rows
         if row.get("success", 0)
         and row.get("cache_hit", 0.0) == 0
+        and not row.get("prefix_cache_disabled")
         and "hf_auto" not in str(row.get("backend", ""))
     ]
     if cache_misses:
         findings.append({
             "severity": "medium",
             "area": "prefix_cache",
-            "finding": "Native runs did not observe prefix-cache reuse.",
+            "finding": f"{len(cache_misses)} native run(s) did not observe prefix-cache reuse.",
             "recommendation": (
                 "Reuse stable prompt prefixes and cache namespaces, add explicit cache breakpoints, "
                 "then inspect /cache/inspect miss reasons."

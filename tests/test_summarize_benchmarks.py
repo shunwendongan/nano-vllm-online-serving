@@ -63,6 +63,29 @@ class SummarizeBenchmarksTest(unittest.TestCase):
         self.assertIn("kv_pressure", markdown)
         self.assertIn("prefill_ttft", markdown)
 
+    def test_summary_does_not_treat_disabled_prefix_cache_as_miss(self):
+        summary = build_summary([
+            {
+                "experiment": "cuda_ext",
+                "run_id": "run",
+                "backend": "cuda_ext",
+                "policy": "alternate",
+                "success": 8,
+                "errors": 0,
+                "req_s": 1.0,
+                "tok_s": 10.0,
+                "ttft_p95_s": 0.1,
+                "latency_p95_s": 1.5,
+                "cache_hit": 0.0,
+                "preemptions": 0,
+                "evictions": 0,
+                "slo_pass": True,
+                "prefix_cache_disabled": True,
+            }
+        ], "reports/cloudstudio")
+
+        self.assertNotIn("prefix_cache", {finding["area"] for finding in summary["findings"]})
+
     def test_write_summary_creates_json_and_markdown(self):
         with tempfile.TemporaryDirectory() as tmp:
             summary = build_summary([], Path(tmp))
