@@ -86,6 +86,15 @@ class FakeEngine:
         self.exited = True
 
 
+class LongOutputEngine(FakeEngine):
+    def add_request(self, prompt, sampling_params, request_id=None, **kwargs):
+        self.requests[request_id] = {
+            "tokens": list(range(100, 100 + sampling_params.max_tokens)),
+            "index": 0,
+        }
+        return request_id
+
+
 class StuckEngine(FakeEngine):
     def is_finished(self):
         return True
@@ -148,6 +157,15 @@ class AsyncEngineTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(output["text"], "<101><102>")
         self.assertEqual(output["finish_reason"], "length")
         self.assertEqual(output["usage"]["cache_read_input_tokens"], 2)
+
+    async def test_generate_collects_more_tokens_than_output_queue_capacity(self):
+        self.engine = AsyncLLMEngine("fake", engine_cls=LongOutputEngine, output_queue_size=4)
+
+        output = await self.engine.generate("hello", SamplingParams(max_tokens=20), request_id="long")
+
+        self.assertEqual(output["token_ids"], list(range(100, 120)))
+        self.assertEqual(output["finish_reason"], "length")
+        self.assertEqual(self.engine.metrics()["cancelled_requests"], 0)
 
     async def test_zero_max_tokens_warms_cache_without_streaming_completion_tokens(self):
         self.engine = AsyncLLMEngine("fake", engine_cls=FakeEngine)

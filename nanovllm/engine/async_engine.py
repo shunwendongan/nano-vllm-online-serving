@@ -706,6 +706,7 @@ class AsyncLLMEngine:
                     break
                 yield item
                 if item.get("finished"):
+                    request.finished = True
                     break
         finally:
             if not request.finished:
@@ -826,6 +827,8 @@ class AsyncLLMEngine:
     async def _put_or_drop(self, request: AsyncRequest, item: Any):
         try:
             request.output_queue.put_nowait(item)
+            if item is not _STOP and not (isinstance(item, dict) and item.get("finished")):
+                await asyncio.sleep(0)
             return True
         except asyncio.QueueFull:
             if item is _STOP:
