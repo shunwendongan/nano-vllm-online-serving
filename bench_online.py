@@ -331,6 +331,10 @@ def run(args):
         report["server_evictions"] = metrics.get("evictions", 0)
         report["server_recent_ttft_p95_s"] = metrics.get("recent_ttft_p95_s", 0.0)
         report["server_recent_latency_p95_s"] = metrics.get("recent_latency_p95_s", 0.0)
+        report["server_admission_slo_rejections"] = metrics.get("admission_slo_rejections", "")
+        report["server_admission_overload_reason"] = metrics.get("admission_overload_reason", "")
+        report["server_stream_flush_tokens"] = metrics.get("stream_flush_tokens", "")
+        report["server_stream_flush_interval_s"] = metrics.get("stream_flush_interval_s", "")
     slo_failures = []
     if args.fail_on_errors and errors:
         slo_failures.append(f"errors={errors}")
@@ -380,6 +384,10 @@ def markdown_summary(report: dict):
         ("server_prefix_cache_hit_rate", report.get("server_prefix_cache_hit_rate")),
         ("server_preemptions", report.get("server_preemptions")),
         ("server_evictions", report.get("server_evictions")),
+        ("server_admission_slo_rejections", report.get("server_admission_slo_rejections", "")),
+        ("server_admission_overload_reason", report.get("server_admission_overload_reason", "")),
+        ("server_stream_flush_tokens", report.get("server_stream_flush_tokens", "")),
+        ("server_stream_flush_interval_s", report.get("server_stream_flush_interval_s", "")),
         ("slo_pass", report.get("slo_pass")),
     ]
     lines = [
