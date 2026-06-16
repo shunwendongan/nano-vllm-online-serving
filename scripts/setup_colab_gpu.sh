@@ -81,6 +81,23 @@ if [[ "${INSTALL_FLASH}" == "1" || "${INSTALL_FLASH}" == "true" ]]; then
   fi
 fi
 
+download_hf_model() {
+  local model_id="$1"
+  local local_dir="$2"
+  if command -v hf >/dev/null 2>&1; then
+    if hf download "${model_id}" --local-dir "${local_dir}"; then
+      return 0
+    fi
+    echo "hf download failed; retrying with huggingface_hub.snapshot_download." >&2
+  fi
+  "${PYTHON_BIN}" - "${model_id}" "${local_dir}" <<'PY'
+import sys
+from huggingface_hub import snapshot_download
+
+snapshot_download(repo_id=sys.argv[1], local_dir=sys.argv[2])
+PY
+}
+
 if [[ -n "${HF_MODEL_ID:-}" ]]; then
   if [[ -z "${HF_LOCAL_DIR:-}" ]]; then
     HF_SAFE_NAME="${HF_MODEL_ID//\//__}"
@@ -95,7 +112,7 @@ if [[ -n "${HF_MODEL_ID:-}" ]]; then
   if [[ "${SKIP_MODEL_DOWNLOAD:-0}" == "1" || "${SKIP_MODEL_DOWNLOAD:-0}" == "true" ]]; then
     echo "Skipping HuggingFace model download because SKIP_MODEL_DOWNLOAD=${SKIP_MODEL_DOWNLOAD}."
   else
-    huggingface-cli download "${HF_MODEL_ID}" --local-dir "${HF_LOCAL_DIR}"
+    download_hf_model "${HF_MODEL_ID}" "${HF_LOCAL_DIR}"
   fi
 fi
 
