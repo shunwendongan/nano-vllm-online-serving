@@ -31,6 +31,35 @@ def _cuda_cflags():
     return flags
 
 
+def _is_float32_dtype(dtype):
+    return str(dtype) in ("torch.float32", "float32")
+
+
+def _float32_contiguous(tensor, name: str, *, allow_cast: bool):
+    dtype = getattr(tensor, "dtype", None)
+    if hasattr(tensor, "contiguous"):
+        tensor = tensor.contiguous()
+    if dtype is None or _is_float32_dtype(dtype):
+        return tensor, None
+    if not allow_cast:
+        raise RuntimeError(
+            f"cuda_ext paged decode requires {name} to be float32; "
+            "set kv_cache_dtype='float32' when attention_backend='cuda_ext'."
+        )
+    if not hasattr(tensor, "float"):
+        raise RuntimeError(f"cuda_ext could not cast {name} to float32")
+    tensor = tensor.float()
+    if hasattr(tensor, "contiguous"):
+        tensor = tensor.contiguous()
+    return tensor, dtype
+
+
+def _restore_dtype(tensor, dtype):
+    if dtype is None or not hasattr(tensor, "to"):
+        return tensor
+    return tensor.to(dtype=dtype)
+
+
 def _load_extension():
     global _EXTENSION, _EXTENSION_ERROR
     if _EXTENSION is not None:
@@ -80,23 +109,39 @@ def is_cuda_ext_available() -> bool:
 
 
 def dense_mha_attention(q, k, v, causal: bool = True):
-    return _load_extension().dense_mha_forward(q, k, v, bool(causal))
+    extension = _load_extension()
+    q, output_dtype = _float32_contiguous(q, "q", allow_cast=True)
+    k, _ = _float32_contiguous(k, "k", allow_cast=True)
+    v, _ = _float32_contiguous(v, "v", allow_cast=True)
+    return _restore_dtype(extension.dense_mha_forward(q, k, v, bool(causal)), output_dtype)
 
 
 def gqa_mqa_attention(q, k, v, causal: bool = True):
-    return _load_extension().gqa_mqa_forward(q, k, v, bool(causal))
+    extension = _load_extension()
+    q, output_dtype = _float32_contiguous(q, "q", allow_cast=True)
+    k, _ = _float32_contiguous(k, "k", allow_cast=True)
+    v, _ = _float32_contiguous(v, "v", allow_cast=True)
+    return _restore_dtype(extension.gqa_mqa_forward(q, k, v, bool(causal)), output_dtype)
 
 
 def streaming_gqa_attention(q, k, v, causal: bool = True):
-    return _load_extension().streaming_gqa_forward(q, k, v, bool(causal))
+    extension = _load_extension()
+    q, output_dtype = _float32_contiguous(q, "q", allow_cast=True)
+    k, _ = _float32_contiguous(k, "k", allow_cast=True)
+    v, _ = _float32_contiguous(v, "v", allow_cast=True)
+    return _restore_dtype(extension.streaming_gqa_forward(q, k, v, bool(causal)), output_dtype)
 
 
 def paged_decode_attention(q, k_cache, v_cache, context_lens, block_tables, scale: float):
-    return _load_extension().paged_decode_attention(
+    extension = _load_extension()
+    q, output_dtype = _float32_contiguous(q, "q", allow_cast=True)
+    k_cache, _ = _float32_contiguous(k_cache, "k_cache", allow_cast=False)
+    v_cache, _ = _float32_contiguous(v_cache, "v_cache", allow_cast=False)
+    return _restore_dtype(extension.paged_decode_attention(
         q,
         k_cache,
         v_cache,
         context_lens,
         block_tables,
         float(scale),
-    )
+    ), output_dtype)

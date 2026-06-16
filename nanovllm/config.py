@@ -24,7 +24,7 @@ class Config:
     max_prefill_chunk_tokens: int = 2048  # 在线调度中单轮prefill最多处理的token数
     min_prefill_chunk_tokens: int = 1  # decode压力下动态分块的最小prefill token预算
     scheduler_fairness: str = "alternate"  # prefill/decode公平性策略
-    kv_cache_dtype: str = "auto"  # auto/fp8_e4m3/fp8_e5m2，默认保持模型dtype
+    kv_cache_dtype: str = "auto"  # auto/float32/fp8_e4m3/fp8_e5m2，默认保持模型dtype
     kv_compression: str = "none"  # KIVI/SnapKV/TurboQuant等实验入口，默认不启用
     op_backend: str = "torch"  # torch/triton/cuda_ext，默认使用稳定PyTorch算子
     attention_backend: str = "flash_attn"  # flash_attn/cuda_ext，默认使用稳定flash-attn路径
@@ -46,7 +46,7 @@ class Config:
         assert self.max_cached_blocks >= 0
         assert self.max_cached_blocks_per_namespace >= 0
         assert self.scheduler_fairness in ("alternate", "fcfs", "prefill_first", "decode_first", "cache_aware_lpm")
-        assert self.kv_cache_dtype in ("auto", "fp8_e4m3", "fp8_e5m2")
+        assert self.kv_cache_dtype in ("auto", "float32", "fp8_e4m3", "fp8_e5m2")
         assert self.kv_compression in (
             "none",
             "kivi_exp",
