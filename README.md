@@ -1,8 +1,12 @@
 # nano-vLLM Online Serving Lab
 
-基于 nano-vLLM 改造的轻量级 LLM Serving 实验项目，重点覆盖在线推理、continuous batching、Paged KV cache、prefix cache diagnostics、OpenAI-style API、Colab GPU 验证和 benchmark 报告闭环。
+这是一个基于 nano-vLLM 改造的轻量级 LLM Serving 实验项目，重点覆盖在线推理、continuous batching、Paged KV cache、prefix cache diagnostics、OpenAI-style API、Colab/CloudStudio GPU 验证，以及 benchmark 报告闭环。
 
-这个仓库适合作为学习和实习项目展示：代码结构保留 nano-vLLM 的教学可读性，同时补上企业在线推理系统里常见的请求生命周期、调度、缓存、指标和实验配置。
+这个仓库适合作为学习、实习和项目展示材料。代码结构保留 nano-vLLM 的教学可读性，同时补充企业在线推理系统中常见的请求生命周期管理、调度、缓存、指标和实验配置。
+
+## 共享与协作
+
+本项目由 GitHub 账号 `shunwendongan` 维护，并共享给 Codex coding agent 参与代码分析、性能瓶颈定位、实验配置整理、优化实现和 PR 辅助交付。仓库访问权限以 GitHub 实际 collaborator/settings 为准。
 
 ## 主要能力
 
@@ -14,14 +18,14 @@
 - Prefix cache：exact prefix cache、TTL、namespace、quota、LRU eviction、miss reason diagnostics。
 - Metrics：TTFT、latency、queue wait、prefill/decode tok/s、cache hit rate、preemption、eviction。
 - Benchmark：`bench_online.py` 输出 JSON 和 Markdown 报告，并附带瓶颈分析建议。
-- Colab 配置：用 `configs/colab/*.env` 固化 GPU 验证参数，方便复现实验。
-- 实验 backend：`attention_backend=flash_attn|cuda_ext`，`model_backend=native|hf_auto`。
+- Colab/CloudStudio 配置：用 `configs/colab/*.env` 和 `configs/cloudstudio/*.env` 固化 GPU 验证参数，方便复现实验。
+- 实验 backend：支持 `attention_backend=flash_attn|cuda_ext` 和 `model_backend=native|hf_auto`。
 
 ## 当前边界
 
-本地 Windows 环境用于非 GPU 回归测试，不证明真实模型吞吐。真实性能数据需要在 Google Colab 或 CUDA 服务器上运行。
+本地开发环境主要用于非 GPU 回归测试，不能证明真实模型吞吐。真实性能数据需要在 Google Colab、CloudStudio 或其他 CUDA 服务器上运行。
 
-- `model_backend=native` 才代表 nano-vLLM 自研 scheduler、Paged KV cache、prefix cache 路径。
+- `model_backend=native` 才代表 nano-vLLM 自研 scheduler、Paged KV cache 和 prefix cache 路径。
 - `model_backend=hf_auto` 是 Transformers 兼容路径，用于 gpt-oss smoke test，不等同于 native continuous batching 性能。
 - `attention_backend=cuda_ext` 是显式实验路径，默认稳定路径仍是 `flash_attn`。
 - FP8/KIVI/SnapKV/H2O/StreamingLLM 等 KV 压缩入口保留为实验开关，默认不启用。
@@ -46,7 +50,8 @@ nanovllm/
   kernels/cuda_ext/                # CUDA attention extension skeleton
   models/                          # Qwen/CPM/gpt-oss compatibility layer
 
-configs/colab/                     # GPU experiment configs
+configs/colab/                     # Colab GPU experiment configs
+configs/cloudstudio/               # CloudStudio/A10/A100 experiment configs
 scripts/
   run_local_tests.ps1              # local non-GPU regression
   setup_colab_gpu.sh               # Colab dependency/model setup
@@ -59,7 +64,7 @@ tests/                             # non-GPU unit/API/mock tests
 
 ## 本地非 GPU 测试
 
-本机只跑 Python 逻辑、API mock、scheduler、block manager、async engine、脚本和 CLI wiring。
+本地仅运行 Python 逻辑、API mock、scheduler、block manager、async engine、脚本和 CLI wiring 等非 GPU 回归测试。
 
 ```powershell
 .\scripts\run_local_tests.ps1
@@ -72,7 +77,7 @@ python -m pip install -r requirements-local.txt
 python -m pytest tests -q
 ```
 
-本地测试不会安装 `torch`、`flash-attn`、`triton` 或 CUDA 相关依赖。
+本地测试默认不会安装 `torch`、`flash-attn`、`triton` 或 CUDA 相关依赖。
 
 ## Colab GPU 快速开始
 
@@ -135,7 +140,7 @@ python scripts/run_colab_config.py \
 
 ## CloudStudio GPU 快速开始
 
-CloudStudio/A10 工作区优先使用仓库内路径，避免 Colab 的 `/content` 目录假设：
+CloudStudio/A10 工作区优先使用仓库内路径，避免依赖 Colab 的 `/content` 目录约定：
 
 ```bash
 nvidia-smi
@@ -149,13 +154,37 @@ python scripts/run_colab_config.py --config configs/cloudstudio/qwen3_native_fla
 bash scripts/run_cloudstudio_matrix.sh a10
 ```
 
-切换到 A100 后可运行：
+切换到 A100 后，可以运行 A100 压力测试配置：
 
 ```bash
 bash scripts/run_cloudstudio_matrix.sh a100
 ```
 
 详细说明见 [docs/CLOUDSTUDIO_BENCHMARKS.md](docs/CLOUDSTUDIO_BENCHMARKS.md)。
+
+## 不同 GPU 的配置策略
+
+nano-vLLM 部署到不同 GPU 时，不一定必须新增配置文件。只要模型路径、依赖版本、服务端口和 backend 参数正确，同一套启动命令或 `.env` 配置通常可以运行。
+
+单独保留 A10、A100 或其他 GPU 的 `.env` 文件，主要是为了可复现实验和硬件调优，而不是因为 nano-vLLM 每换一张 GPU 都必须改代码。不同 GPU 的显存、算力、batch 承载能力和 CUDA graph 稳定性不同，常见需要调整的是：
+
+- `GPU_MEMORY_UTILIZATION`
+- `MAX_NUM_BATCHED_TOKENS`
+- `MAX_NUM_SEQS`
+- `MAX_PREFILL_CHUNK_TOKENS`
+- `SCHEDULER_FAIRNESS`
+- `ENFORCE_EAGER`
+- `STREAM_INTERVAL`
+- benchmark 侧的 `BENCHMARK_CONCURRENCY`、`BENCHMARK_REQUESTS` 和 `MAX_TOKENS`
+
+临时实验可以直接用 shell 环境变量覆盖已存在的配置，例如：
+
+```bash
+BENCHMARK_CONCURRENCY=64 BENCHMARK_REQUESTS=128 \
+python scripts/run_colab_config.py --config configs/cloudstudio/qwen3_native_prefill_first.env
+```
+
+当某组参数已经被验证为适合 A10、A100 或某个固定实验目标时，再沉淀为独立 `.env` 文件会更利于复现、对比和提交报告。
 
 ## 启动服务
 

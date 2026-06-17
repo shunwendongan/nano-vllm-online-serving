@@ -44,6 +44,7 @@ VALUE_ARGS = {
     "MAX_ACTIVE_TOKENS": "--max-active-tokens",
     "MAX_ACTIVE_TOKENS_PER_NAMESPACE": "--max-active-tokens-per-namespace",
     "METRICS_WINDOW_SIZE": "--metrics-window-size",
+    "STREAM_INTERVAL": "--stream-interval",
     "PROMPT": "--prompt",
     "MAX_TOKENS": "--max-tokens",
     "CACHE_NAMESPACE": "--cache-namespace",
@@ -142,6 +143,25 @@ def load_env_config(path: str | Path):
     return config
 
 
+def apply_env_overrides(config: dict[str, str], environ: dict[str, str] | None = None):
+    environ = os.environ if environ is None else environ
+    override_keys = set(VALUE_ARGS) | set(TRUE_FLAGS) | {"ENFORCE_EAGER"}
+    addable_keys = {"STREAM_INTERVAL"}
+    overrides = {}
+    for key in sorted(override_keys):
+        if key not in environ:
+            continue
+        if key not in config and key not in addable_keys:
+            continue
+        old_value = config.get(key)
+        new_value = environ[key]
+        if old_value == new_value:
+            continue
+        config[key] = new_value
+        overrides[key] = {"old": old_value, "new": new_value}
+    return overrides
+
+
 def parse_bool(value: str, key: str):
     normalized = str(value).strip().lower()
     if normalized in TRUE_VALUES:
@@ -205,6 +225,7 @@ def write_run_metadata(
     run_dir: str | Path,
     command: list[str],
     dry_run: bool,
+    env_overrides: dict[str, dict[str, str | None]] | None = None,
 ):
     run_dir = Path(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -214,6 +235,7 @@ def write_run_metadata(
         "command": command,
         "command_shell": shlex.join(command),
         "config": config,
+        "env_overrides": env_overrides or {},
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
     (run_dir / "resolved_config.json").write_text(
@@ -226,10 +248,11 @@ def write_run_metadata(
 
 def run_from_config(args):
     config = load_env_config(args.config)
+    env_overrides = apply_env_overrides(config)
     unknown = validate_config_keys(config, allow_unknown=args.allow_unknown)
     run_dir = resolve_run_dir(config, args.config, run_id=args.run_id)
     command = build_validate_command(config, run_dir, validate_python=args.validate_python)
-    metadata = write_run_metadata(config, args.config, run_dir, command, args.dry_run)
+    metadata = write_run_metadata(config, args.config, run_dir, command, args.dry_run, env_overrides=env_overrides)
     if unknown:
         metadata["ignored_unknown_keys"] = unknown
     print(json.dumps({
@@ -237,6 +260,7 @@ def run_from_config(args):
         "dry_run": args.dry_run,
         "command": command,
         "command_shell": shlex.join(command),
+        "env_overrides": env_overrides,
     }, indent=2, ensure_ascii=False))
     if args.dry_run:
         return 0

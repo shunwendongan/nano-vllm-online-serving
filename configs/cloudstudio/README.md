@@ -4,6 +4,12 @@ These configs are the CloudStudio/A10 equivalents of `configs/colab/*.env`.
 They avoid Colab-only `/content` paths and keep downloaded models plus reports
 inside the repository workspace.
 
+You do not need a new config file for every GPU model just to start the server.
+The checked-in A10 and A100 files are reproducible benchmark profiles. For quick
+experiments, override known keys from the shell and let
+`scripts/run_colab_config.py` record the effective values in
+`resolved_config.json`.
+
 Recommended order:
 
 1. `qwen3_native_flash_attn_baseline.env`
@@ -11,8 +17,10 @@ Recommended order:
 3. `qwen3_native_prefill_first.env`
 4. `qwen3_native_cache_aware_lpm.env`
 5. `qwen3_native_cuda_ext_decode.env`
-6. `qwen3_native_a100_high_concurrency.env` after switching CloudStudio to A100.
-7. `qwen3_native_a100_long_context.env` after switching CloudStudio to A100.
+6. `qwen3_native_a10_prefill_first_c64_r128.env` for the A10 optimized
+   high-concurrency probe.
+7. `qwen3_native_a100_high_concurrency.env` after switching CloudStudio to A100.
+8. `qwen3_native_a100_long_context.env` after switching CloudStudio to A100.
 
 Run from the repository root:
 
@@ -32,6 +40,20 @@ bash scripts/run_colab_sweep.sh \
 ```
 
 Each run writes artifacts under `reports/cloudstudio/<experiment>/<run_id>/`.
+
+For the A10 optimized probe:
+
+```bash
+python scripts/run_colab_config.py --config configs/cloudstudio/qwen3_native_a10_prefill_first_c64_r128.env
+```
+
+`scripts/run_colab_config.py` also records shell environment overrides in
+`resolved_config.json`, so short probes can safely adjust a checked-in config:
+
+```bash
+BENCHMARK_CONCURRENCY=96 BENCHMARK_REQUESTS=192 \
+python scripts/run_colab_config.py --config configs/cloudstudio/qwen3_native_a10_prefill_first_c64_r128.env
+```
 
 For A100 stress tests:
 

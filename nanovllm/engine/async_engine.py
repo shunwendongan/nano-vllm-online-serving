@@ -827,8 +827,6 @@ class AsyncLLMEngine:
     async def _put_or_drop(self, request: AsyncRequest, item: Any):
         try:
             request.output_queue.put_nowait(item)
-            if item is not _STOP and not (isinstance(item, dict) and item.get("finished")):
-                await asyncio.sleep(0)
             return True
         except asyncio.QueueFull:
             if item is _STOP:
@@ -872,6 +870,7 @@ class AsyncLLMEngine:
                     self.decode_tokens += -num_tokens
                     self.decode_elapsed_s += step_elapsed
                     self.recent_decode_steps.append((-num_tokens, step_elapsed))
+                delivered_stream_output = False
                 for output in outputs:
                     request = self.active.get(output["request_id"])
                     if request is None:
@@ -890,6 +889,8 @@ class AsyncLLMEngine:
                     delivered = await self._put_or_drop(request, output)
                     if not delivered:
                         continue
+                    if not output["finished"]:
+                        delivered_stream_output = True
                     if output["finished"]:
                         request.finished = True
                         request.finished_at = time.time()
@@ -908,6 +909,8 @@ class AsyncLLMEngine:
                         )
                         await self._put_or_drop(request, _STOP)
                         self.active.pop(request.request_id, None)
+                if delivered_stream_output:
+                    await asyncio.sleep(0)
                 await self._expire_active()
             except Exception as exc:
                 self.loop_errors += 1

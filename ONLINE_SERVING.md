@@ -71,6 +71,7 @@ Production-facing queue controls:
 - `--request-timeout-s`: bounds total request lifetime from submission to completion.
 - `--request-log-path`: writes JSONL request lifecycle events for observability. The log records request ids, state transitions, latency, token counts, and cache settings, but not prompt text.
 - `--metrics-window-size`: controls the rolling window used for recent latency and throughput metrics.
+- `--stream-interval`: coalesces streaming token chunks after the first token. The default `1` preserves per-token SSE behavior; values such as `4` or `8` reduce HTTP/SSE write overhead for high-concurrency throughput probes while keeping first-token flush immediate.
 
 Deployment controls:
 
@@ -223,6 +224,12 @@ python scripts/run_colab_config.py --config configs/colab/qwen3_native_flash_att
 ```
 
 Each run writes timestamped artifacts under `reports/colab/<experiment>/<run_id>/`. See `docs/COLAB_BENCHMARKS.md` for the config matrix, gpt-oss `hf_auto` smoke flow, native Qwen baseline, scheduler comparison, and CUDA extension experiment.
+
+`scripts/run_colab_config.py` applies shell environment overrides for known runtime
+keys and records them in `resolved_config.json`. For example,
+`BENCHMARK_CONCURRENCY=64 python scripts/run_colab_config.py --config ...` now
+changes the effective benchmark command instead of silently using the `.env`
+value.
 
 ## Benchmarking
 

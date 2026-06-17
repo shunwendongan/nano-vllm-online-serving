@@ -59,6 +59,7 @@ def parse_args():
     parser.add_argument("--request-log-path", default=None)
     parser.add_argument("--max-pending-prompt-tokens", type=int, default=None)
     parser.add_argument("--metrics-window-size", type=int, default=1024)
+    parser.add_argument("--stream-interval", type=int, default=1)
     return parser.parse_args()
 
 
@@ -105,6 +106,7 @@ def main():
         request_log_path=args.request_log_path,
         max_pending_prompt_tokens=args.max_pending_prompt_tokens,
         metrics_window_size=args.metrics_window_size,
+        stream_interval=args.stream_interval,
     )
     uvicorn.run(app, host=args.host, port=args.port)
 

@@ -179,6 +179,8 @@ def build_server_command(args):
         str(args.max_active_tokens_per_namespace),
         "--metrics-window-size",
         str(args.metrics_window_size),
+        "--stream-interval",
+        str(args.stream_interval),
         "--request-log-path",
         args.request_log_path,
     ]
@@ -569,6 +571,7 @@ def parse_args(argv=None):
     parser.add_argument("--max-active-tokens", type=int, default=65536)
     parser.add_argument("--max-active-tokens-per-namespace", type=int, default=65536)
     parser.add_argument("--metrics-window-size", type=int, default=1024)
+    parser.add_argument("--stream-interval", type=int, default=1)
     parser.add_argument("--request-log-path", default="online_requests.jsonl")
     parser.add_argument("--prompt", default="Explain continuous batching and paged KV cache in one sentence.")
     parser.add_argument("--max-tokens", type=int, default=32)
