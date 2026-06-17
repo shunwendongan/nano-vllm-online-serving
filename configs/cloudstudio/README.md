@@ -4,6 +4,12 @@ These configs are the CloudStudio/A10 equivalents of `configs/colab/*.env`.
 They avoid Colab-only `/content` paths and keep downloaded models plus reports
 inside the repository workspace.
 
+You do not need a new config file for every GPU model just to start the server.
+The checked-in A10 and A100 files are reproducible benchmark profiles. For quick
+experiments, override known keys from the shell and let
+`scripts/run_colab_config.py` record the effective values in
+`resolved_config.json`.
+
 Recommended order:
 
 1. `qwen3_native_flash_attn_baseline.env`
